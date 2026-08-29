@@ -42,9 +42,19 @@ function mapListToMdast(block, level = 1) {
   };
 }
 
+/** One row of contract cells -> an mdast `tableRow`. Each cell is `InlineText`, so it is
+ *  parsed for its inline nodes exactly as a paragraph's text is; the surrounding stringifier
+ *  decides the pipe escaping and column padding, which is why nothing is stringified here. */
+const tableRow = (cells) => ({
+  type: 'tableRow',
+  children: cells.map((cell) => ({ type: 'tableCell', children: parseInlineText(cell) })),
+});
+
 /** Convert a single Block object to an mdast node.
- *  Only handles the four types specified in the task: heading, paragraph, list, quote.
- *  Other block types throw an error indicating they are not yet supported. */
+ *  Handles the seven core-derived types the mappers cover: heading, paragraph, list, quote,
+ *  code, table, separator. `image` is the one that is still genuinely unsupported — it needs
+ *  a media upload path that does not exist — and throws, as does any custom `jamground/*`
+ *  type, rather than being silently dropped. */
 export function blockToMdast(block) {
   switch (block.type) {
     case 'heading': {
@@ -77,6 +87,29 @@ export function blockToMdast(block) {
           },
         ],
       };
+
+    // PLAIN TEXT: `text` becomes the fence's `value` verbatim and is never parsed for inline
+    // marks — `parseInlineText` here would turn `**bold**` inside a code sample into a
+    // `strong` node and print it back as `<strong>`. `lang` and `meta` are null because
+    // `Code` deliberately carries no info string (blocks.ts:52-57); with `fences: true` the
+    // stringifier emits a ``` fence, and an empty `value` an empty one.
+    case 'code':
+      return { type: 'code', lang: null, meta: null, value: block.text };
+
+    // The head row and the body rows, in one `children` list — mdast has no thead/tbody, the
+    // first row IS the header. `align` is one null per column: the contract carries no
+    // alignment, so every column stays default-aligned (`| --- |`), and stating it per column
+    // is what keeps the delimiter row's width in step with the header.
+    case 'table':
+      return {
+        type: 'table',
+        align: block.head.map(() => null),
+        children: [tableRow(block.head), ...block.rows.map(tableRow)],
+      };
+
+    // `rule: '-'` and `ruleSpaces: false` in the canonical settings make this `---`.
+    case 'separator':
+      return { type: 'thematicBreak' };
 
     default:
       throw new Error(`blocksToMdast does not yet support block type: ${block.type}`);

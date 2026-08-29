@@ -198,6 +198,113 @@ test('round trip: seed post 2 (draft, minimal fields) is byte-identical', () => 
   assert.equal(exported, SEED_POST_2);
 });
 
+// THE STAGE-3 FIXTURE: one post carrying a code fence, a table and a horizontal rule.
+//
+// Every one of these three used to throw out of `blocksToMarkup`, which is what made a post
+// containing any of them import as a completely empty wp-admin (before Stage 0) and then a
+// held-back file (after it). The property asserted is the one import.mjs's admission check
+// runs on every boot: markdown -> blocks -> Gutenberg -> blocks -> mdast -> markdown must be
+// IDENTITY, because anything less writes the difference into the person's repository on the
+// first save with no edit at all.
+//
+// Three things this fixture pins that the paragraph-only ones cannot:
+//   - the fence's contents are PLAIN TEXT. `**not bold**`, `_x_`, `<` and `&` are all in
+//     there, and every one of them must come back the character it went in as. Sending a
+//     code block through the InlineText path instead turns them into marks.
+//   - an EMPTY fence is legal (`Code.text` has no `.min(1)`) and must survive as a block.
+//   - the table is in the canonical PADDED form remark-stringify emits. It is the form the
+//     content repository holds, and a table padded any other way is held back rather than
+//     silently reformatted.
+//
+// This goes through KINDS.post.toBlocks — the real production path import.mjs takes — not
+// this file's local mapNode, which covers only the four original types on purpose.
+const SEED_POST_3 = `---
+id: 01M0BSHTFEWS6VYC4XBR52R3JK
+translationOf: 01M0BSHSG62QD33PKX3GRRXX5Y
+locale: en-US
+slug: test-post-3
+title: Test Post 3
+status: published
+publishedAt: '2026-08-29T09:00:00Z'
+updatedAt: '2026-08-29T09:00:00Z'
+author: 01M0BSHNK661FD6Y2JPMH75A1C
+---
+
+## What this post is for
+
+Intro paragraph with **bold** and a [link](https://example.com).
+
+\`\`\`
+const x = 1;
+if (a < b && c > d) { return "**not bold**"; }
+- not a list item
+\`\`\`
+
+| Plan    | Price | Notes          |
+| ------- | ----- | -------------- |
+| Starter | $0    | \`free\` forever |
+| Pro     | $9    | **best value** |
+
+---
+
+> A quote after the rule.
+
+\`\`\`
+\`\`\`
+
+End.
+`;
+
+test('round trip: a post with a code fence, a table and a rule is byte-identical', () => {
+  const parsed = parsePost('/content/posts/en-US/test3.md', SEED_POST_3);
+
+  // The real import path: the kind table decides how a post becomes blocks.
+  const blocks = KINDS.post.toBlocks(parsed);
+  assert.deepEqual(
+    blocks.map((b) => b.type),
+    ['heading', 'paragraph', 'code', 'table', 'separator', 'quote', 'code', 'paragraph'],
+    'the fixture must actually contain all three new types, or this asserts nothing',
+  );
+  assert.equal(blocks[6].text, '', 'including the empty code block, which is legal');
+
+  const markup = blocksToMarkup(api, blocks);
+  // Gutenberg validates a block by re-running its save() and string-comparing, so an
+  // invalid block here would show in wp-admin as "this block contains unexpected content".
+  for (const block of parse(markup)) {
+    assert.equal(block.isValid, true, `block ${block.name} re-parses invalid`);
+  }
+
+  // And back out, through the same mappers a save uses.
+  const importedBlocks = markupToContractBlocks(api, markup);
+  assert.deepEqual(importedBlocks, blocks, 'the block list survives the trip through Gutenberg');
+
+  const exported = exportPost({
+    api, markup,
+    frontmatter: parsed.frontmatter,
+    previousSlug: parsed.frontmatter.slug,
+    updatedAt: parsed.frontmatter.updatedAt,
+  });
+
+  const diffOffset = findFirstDiff(SEED_POST_3, exported);
+  assert.equal(
+    diffOffset, -1,
+    diffOffset >= 0
+      ? `First differing byte at offset ${diffOffset}: original=${JSON.stringify(SEED_POST_3[diffOffset])} vs exported=${JSON.stringify(exported[diffOffset])}`
+      : 'bytes should be identical'
+  );
+  assert.equal(exported, SEED_POST_3);
+});
+
+test('round trip: a code sample keeps its markdown marks as characters, not as formatting', () => {
+  // The single most destructive way to get `code` wrong, isolated from the file bytes: run it
+  // through the InlineText path and `**not bold**` comes back `<strong>` on the way in and
+  // stays `**not bold**` only by luck on the way out — while `_x_`, `` `y` `` and a bare `<`
+  // do not survive at all. Asserted on the block list, so the failure names the sample.
+  const sample = 'let s = "**a** _b_ `c`"; if (x<1 && y>2) {}';
+  const markup = blocksToMarkup(api, [{ type: 'code', text: sample }]);
+  assert.deepEqual(markupToContractBlocks(api, markup), [{ type: 'code', text: sample }]);
+});
+
 // --- pages -------------------------------------------------------------------------------
 //
 // The same property, through a different serialiser. A page has no markdown step at all: its

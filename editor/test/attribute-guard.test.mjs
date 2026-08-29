@@ -78,6 +78,56 @@ test('a block with no contract representation at all is refused', () => {
   assert.throws(() => guardBlockAttributes(api, block), /core\/spacer/);
 });
 
+// `core/table`'s `caption` is a rich-text attribute with NO registered default, so every
+// table parses with `caption` present and empty whether or not anyone typed one — and
+// `isDefaulted` cannot see that. Without the empty-caption strip, the guard refused EVERY
+// table, so no table could round-trip and every post containing one stayed held back.
+test('a table with no caption passes: the empty caption every table parses with is stripped', () => {
+  const [block] = parse(serialize([createBlock('core/table', {
+    head: [{ cells: [{ content: 'Plan', tag: 'th' }] }],
+    body: [{ cells: [{ content: 'Starter', tag: 'td' }] }],
+  })]));
+  assert.equal('caption' in block.attributes, true, 'present on every parsed table, and empty');
+  assert.equal(String(block.attributes.caption), '');
+  const out = guardBlockAttributes(api, block);
+  assert.equal('caption' in out, false, 'the parser artifact is dropped, not carried');
+  assert.deepEqual(Object.keys(out).sort(), ['body', 'foot', 'hasFixedLayout', 'head']);
+});
+
+test('a caption someone actually TYPED is still refused — the contract has nowhere to keep it', () => {
+  const [block] = parse(serialize([createBlock('core/table', {
+    caption: 'Prices as of today',
+    head: [{ cells: [{ content: 'Plan', tag: 'th' }] }],
+    body: [{ cells: [{ content: 'Starter', tag: 'td' }] }],
+  })]));
+  assert.equal(String(block.attributes.caption), 'Prices as of today');
+  assert.throws(() => guardBlockAttributes(api, block), /caption/);
+  assert.throws(() => guardBlockAttributes(api, block), /core\/table/);
+});
+
+test('a table footer is refused: `foot` leaves its [] default and the contract has no footer', () => {
+  const [block] = parse(serialize([createBlock('core/table', {
+    head: [{ cells: [{ content: 'Plan', tag: 'th' }] }],
+    body: [{ cells: [{ content: 'Starter', tag: 'td' }] }],
+    foot: [{ cells: [{ content: 'Total', tag: 'td' }] }],
+  })]));
+  assert.throws(() => guardBlockAttributes(api, block), /foot/);
+});
+
+test('a separator passes on its two defaults alone, and refuses a colour set away from them', () => {
+  const [block] = parse(serialize([createBlock('core/separator', {})]));
+  assert.deepEqual(guardBlockAttributes(api, block), { opacity: 'alpha-channel', tagName: 'hr' });
+
+  const [coloured] = parse(serialize([createBlock('core/separator', { backgroundColor: 'vivid-red' })]));
+  assert.throws(() => guardBlockAttributes(api, coloured), /backgroundColor/);
+});
+
+test('a code block carries content and nothing else', () => {
+  const [block] = parse(serialize([createBlock('core/code', { content: 'const x = 1;' })]));
+  const out = guardBlockAttributes(api, block);
+  assert.deepEqual(Object.keys(out), ['content']);
+});
+
 test('a jamground custom block allows exactly its registered (schema) attributes', () => {
   registerBlockType('jamground/callout', {
     title: 'Callout',

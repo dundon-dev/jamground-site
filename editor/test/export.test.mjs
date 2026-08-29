@@ -80,10 +80,121 @@ test('unordered list maps back with nested items', () => {
   });
 });
 
-test('a block outside the four in-scope types throws, naming itself', () => {
-  const markup = serialize([createBlock('core/code', { content: 'x = 1' })]);
+test('code block maps back to PLAIN TEXT — the marks in a sample are not read as marks', () => {
+  // THE TRAP. `Code.text` is a bare `z.string()`, and `core/code`'s `content` is HTML-escaped
+  // plain text. Sending it through `htmlAttrToText` (the InlineText path every other content
+  // attribute takes) would read `<strong>` as a mark and hand back `**bold**` — the sample
+  // rewritten. It goes through `unescHtml` instead, which is the exact reverse of what
+  // `blocks-to-wp.mjs` applied.
+  const sample = 'if (a < b && c) { return "**not bold**"; }';
+  const esc = sample
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const markup = serialize([createBlock('core/code', { content: esc })]);
   const [block] = parse(markup);
-  assert.throws(() => wpBlockToContractBlock(block), /unmapped block "core\/code"/);
+  assert.deepEqual(wpBlockToContractBlock(block), { type: 'code', text: sample });
+});
+
+test('code block containing real inline HTML keeps it as text, not as marks', () => {
+  // A code sample that IS `<strong>bold</strong>`. Through `htmlAttrToText` this would come
+  // back as `**bold**`; through `unescHtml` it stays the four-tag sample it is.
+  const markup = serialize([
+    createBlock('core/code', { content: '&lt;strong&gt;bold&lt;/strong&gt;' }),
+  ]);
+  const [block] = parse(markup);
+  assert.deepEqual(wpBlockToContractBlock(block), { type: 'code', text: '<strong>bold</strong>' });
+});
+
+test('an empty code block maps back to an empty string, not a dropped block', () => {
+  const markup = serialize([createBlock('core/code', { content: '' })]);
+  const [block] = parse(markup);
+  assert.deepEqual(wpBlockToContractBlock(block), { type: 'code', text: '' });
+});
+
+test('table block maps back, one head row flattened to cells and the body to rows', () => {
+  const markup = serialize([createBlock('core/table', {
+    head: [{ cells: [{ content: 'Plan', tag: 'th' }, { content: 'Price', tag: 'th' }] }],
+    body: [
+      { cells: [{ content: 'Starter', tag: 'td' }, { content: '$0', tag: 'td' }] },
+      { cells: [{ content: '<strong>Pro</strong>', tag: 'td' }, { content: '$9', tag: 'td' }] },
+    ],
+  })]);
+  const [block] = parse(markup);
+  // `htmlAttrToText` runs PER CELL, so a cell's marks come back as canonical InlineText.
+  assert.deepEqual(wpBlockToContractBlock(block), {
+    type: 'table',
+    head: ['Plan', 'Price'],
+    rows: [['Starter', '$0'], ['**Pro**', '$9']],
+  });
+});
+
+test('a table with no header row is refused, not given an empty one', () => {
+  const markup = serialize([createBlock('core/table', {
+    head: [], body: [{ cells: [{ content: 'a', tag: 'td' }] }],
+  })]);
+  const [block] = parse(markup);
+  assert.throws(() => wpBlockToContractBlock(block), /exactly one header row, found 0/);
+});
+
+test('a table with two header rows is refused rather than flattened into one', () => {
+  const markup = serialize([createBlock('core/table', {
+    head: [
+      { cells: [{ content: 'a', tag: 'th' }] },
+      { cells: [{ content: 'b', tag: 'th' }] },
+    ],
+    body: [{ cells: [{ content: 'c', tag: 'td' }] }],
+  })]);
+  const [block] = parse(markup);
+  assert.throws(() => wpBlockToContractBlock(block), /exactly one header row, found 2/);
+});
+
+test('a table with no body rows is refused — Table.rows is .min(1)', () => {
+  const markup = serialize([createBlock('core/table', {
+    head: [{ cells: [{ content: 'a', tag: 'th' }] }], body: [],
+  })]);
+  const [block] = parse(markup);
+  assert.throws(() => wpBlockToContractBlock(block), /at least one body row/);
+});
+
+test('separator block maps back to the bare contract separator', () => {
+  const markup = serialize([createBlock('core/separator', {})]);
+  const [block] = parse(markup);
+  assert.deepEqual(wpBlockToContractBlock(block), { type: 'separator' });
+});
+
+// The `default:` arm, asserted with a block that is permanently outside the allowlist —
+// `core/columns` has no contract representation and is not going to acquire one — so that
+// finishing another block type cannot invalidate this test the way finishing `core/code`
+// invalidated its previous form. What is being asserted is the arm, not the example.
+test('a block outside the in-scope types throws, naming itself', () => {
+  const markup = serialize([createBlock('core/columns', {})]);
+  const [block] = parse(markup);
+  assert.throws(() => wpBlockToContractBlock(block), /unmapped block "core\/columns"/);
+});
+
+test('markupToBody emits a fence, a table and a rule in canonical markdown', () => {
+  const markup = serialize([
+    createBlock('core/code', { content: 'const x = 1;' }),
+    createBlock('core/table', {
+      head: [{ cells: [{ content: 'Plan', tag: 'th' }, { content: 'Price', tag: 'th' }] }],
+      body: [{ cells: [{ content: 'Starter', tag: 'td' }, { content: '$0', tag: 'td' }] }],
+    }),
+    createBlock('core/separator', {}),
+    createBlock('core/paragraph', { content: 'After.' }),
+  ]);
+  assert.equal(markupToBody(api, markup), [
+    '```',
+    'const x = 1;',
+    '```',
+    '',
+    '| Plan    | Price |',
+    '| ------- | ----- |',
+    '| Starter | $0    |',
+    '',
+    '---',
+    '',
+    'After.',
+    '',
+  ].join('\n'));
 });
 
 test('markupToContractBlocks refuses a non-contract attribute before mapping runs', () => {

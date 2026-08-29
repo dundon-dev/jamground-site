@@ -39,9 +39,50 @@ const envelope = (id, slug, title) => [
 ].join('\n');
 
 const PLAIN = envelope('01M16P87EGDWE51YHVFG9H24VP', 'plain', 'A plain post') + 'Just a paragraph.\n';
-// A fenced code block: mdast-to-blocks maps it to a `code` block, which blocks-to-wp does not yet
-// build. This is not hypothetical — it is what ships today.
-const FENCED = envelope('01M16P88DR31ZM6TH700HGVPMV', 'fenced', 'A post with code') + 'Intro.\n\n```\nconst x = 1;\n```\n';
+
+// An image: mdast-to-blocks maps a lone-image paragraph to an `image` block, which
+// blocks-to-wp still does not build. `content/media/` does not exist, media import is out of
+// scope (import.mjs:12), and `MediaRef` requires a path into that directory — so this is a
+// genuinely unsupported type, not a scope boundary that will move next week. Failure mode A:
+// the IMPORT mapper cannot build the block.
+const PICTURED = envelope('01M16P88DR31ZM6TH700HGVPMV', 'pictured', 'A post with a picture')
+  + 'Intro.\n\n![A photo](media/example-photo.jpg)\n';
+
+// A fenced code block WITH an info string. `Code` deliberately has no `language` field
+// (blocks.ts:52-57), so `mdastToBlocks` drops the `js` and the round trip hands back an
+// unlabelled fence. Both mappers succeed and the bytes still differ — failure mode C, the one
+// that has nothing else watching it, and the reason the admission check is the property
+// itself rather than a list of supported types.
+const LABELLED_FENCE = envelope('01M16P8DE2W1S0BAZ6RTMYK7QG', 'labelled', 'A post with a labelled fence')
+  + 'Intro.\n\n```js\nconst x = 1;\n```\n';
+
+// A post carrying all three of Stage 3's types, in the canonical form the repository holds
+// them in. Every one of these threw out of blocksToMarkup before this stage, so this whole
+// post was held back and could not be edited at all.
+const RICH = envelope('01M16P8EC9DGF4VNQ2X5H7T3KB', 'rich', 'A post with code, a table and a rule')
+  + [
+    'Intro.',
+    '',
+    '```',
+    'const x = 1;',
+    'if (a < b && c) { return "**not bold**"; }',
+    '```',
+    '',
+    '| Plan    | Price |',
+    '| ------- | ----- |',
+    '| Starter | $0    |',
+    '| Pro     | $9    |',
+    '',
+    '---',
+    '',
+    'After the rule.',
+    '',
+    '```',
+    '```',
+    '',
+    'End.',
+    '',
+  ].join('\n');
 
 function harness(files) {
   const written = {};
@@ -66,21 +107,74 @@ function harness(files) {
 test('a post that does not survive the round trip is held back, and the rest still import', async () => {
   const { client, fetchImpl, written } = harness([
     ['content/posts/en-US/plain.md', PLAIN],
-    ['content/posts/en-US/fenced.md', FENCED],
+    ['content/posts/en-US/pictured.md', PICTURED],
   ]);
 
   const result = await importPosts({ client, api, fetchImpl, locale: 'en-US' });
 
   assert.equal(result.refused.length, 1, 'exactly the unsupported post is held back');
-  assert.equal(result.refused[0].path, 'content/posts/en-US/fenced.md');
-  assert.equal(result.refused[0].title, 'A post with code', 'the editor is told WHICH content, by its title');
-  assert.match(result.refused[0].reason, /code/, 'and why, naming the block type');
+  assert.equal(result.refused[0].path, 'content/posts/en-US/pictured.md');
+  assert.equal(result.refused[0].title, 'A post with a picture', 'the editor is told WHICH content, by its title');
+  assert.match(result.refused[0].reason, /image/, 'and why, naming the block type');
 
   // Enforced by absence: the refused entity is not in what WordPress is asked to create.
   const entries = JSON.parse(written['/wordpress/jp-import-data.json']);
   assert.deepEqual(entries.map((e) => e.slug), ['plain'],
     'a held-back entity must never reach wp_insert_post — that absence is what stops save writing it');
   assert.equal(Object.keys(result.map).length, 1, 'and it gets no id in the session map');
+});
+
+// STAGE 3, AND THE WHOLE POINT OF IT. This exact post — a code fence, a table, a `---` — is
+// what `mdastToBlocks` has always produced and what the three mappers could not carry. It was
+// the live defect: before Stage 0 it booted an empty wp-admin with a console message nobody
+// had open; after Stage 0 it was honestly held back. Now it is EDITABLE, and the proof that it
+// is safe to edit is that the admission check — the byte-for-byte round trip — admits it.
+test('a post with a code fence, a table and a rule now IMPORTS rather than being held back', async () => {
+  const { client, fetchImpl, written } = harness([
+    ['content/posts/en-US/plain.md', PLAIN],
+    ['content/posts/en-US/rich.md', RICH],
+  ]);
+
+  const result = await importPosts({ client, api, fetchImpl, locale: 'en-US' });
+
+  assert.deepEqual(result.refused, [], 'nothing is held back: all three types survive the round trip');
+  assert.equal(Object.keys(result.map).length, 2, 'and both posts get a WordPress row');
+
+  const entries = JSON.parse(written['/wordpress/jp-import-data.json']);
+  const rich = entries.find((e) => e.slug === 'rich');
+  assert.equal(rich.title, 'A post with code, a table and a rule');
+  // The canvas WordPress is asked to create really does carry the three blocks, rather than
+  // an emptied body that happened to compare equal.
+  assert.match(rich.content, /<!-- wp:code -->/);
+  assert.match(rich.content, /<!-- wp:table -->/);
+  assert.match(rich.content, /<!-- wp:separator -->/);
+  assert.match(rich.content, /<pre class="wp-block-code"><code>const x = 1;/);
+  assert.match(rich.content, /a &lt; b/, 'the sample is escaped, not truncated at the first `<`');
+  assert.match(rich.content, /\*\*not bold\*\*/, 'and its markdown marks are still characters');
+  assert.doesNotMatch(rich.content, /<code><strong>/, 'never run through the InlineText path');
+  // `_jamground_source` is the fetched bytes verbatim — the thing the next save compares to.
+  assert.equal(rich.source, RICH);
+});
+
+// The failure that no mapper throw would ever catch: both directions succeed, and the bytes
+// still differ. A fence's info string is dropped on purpose, so this post maps to blocks, back
+// to markdown, and comes out as an UNLABELLED fence — a one-character-quiet edit to a file
+// nobody touched. Only the round-trip admission check sees it.
+test('a fence whose info string cannot be represented is held back, not silently unlabelled', async () => {
+  const { client, fetchImpl, written } = harness([
+    ['content/posts/en-US/plain.md', PLAIN],
+    ['content/posts/en-US/labelled.md', LABELLED_FENCE],
+  ]);
+
+  const result = await importPosts({ client, api, fetchImpl, locale: 'en-US' });
+
+  assert.equal(result.refused.length, 1);
+  assert.equal(result.refused[0].path, 'content/posts/en-US/labelled.md');
+  assert.match(result.refused[0].reason, /read and written back unchanged/,
+    'both mappers succeeded — only the byte comparison noticed');
+
+  const entries = JSON.parse(written['/wordpress/jp-import-data.json']);
+  assert.deepEqual(entries.map((e) => e.slug), ['plain']);
 });
 
 test('when everything round-trips, nothing is held back', async () => {
@@ -127,10 +221,38 @@ const pageEnvelope = (id, slug, title) => [
 const PLAIN_PAGE = pageEnvelope('01M16P89CTGH1B6R7ZP0K1QYVX', 'about', 'An ordinary page')
   + '  - type: heading\n    level: 2\n    text: About us\n  - type: paragraph\n    text: Some words.\n';
 
-// A separator: a contract block type blocks-to-wp.mjs does not yet build. Held back for the
-// same reason a post with a code fence is, and by the same machinery.
-const RULED_PAGE = pageEnvelope('01M16P8ABGP5X0MFHZ2QW8N4TR', 'ruled', 'A page with a rule')
-  + '  - type: paragraph\n    text: Above.\n  - type: separator\n  - type: paragraph\n    text: Below.\n';
+// An image: a contract block type blocks-to-wp.mjs still does not build, because there is
+// nowhere for its bytes to live. Held back for the same reason a post with one is, and by the
+// same machinery. (The `media/` path is schema-valid — it has to be, or the page would fail
+// validation and the whole import would refuse WHOLESALE, which is a different refusal.)
+const PICTURED_PAGE = pageEnvelope('01M16P8ABGP5X0MFHZ2QW8N4TR', 'pictured', 'A page with a picture')
+  + '  - type: paragraph\n    text: Above.\n  - type: image\n    media:\n      ref: media/example-photo.jpg\n      alt: A photo\n';
+
+// A page carrying all three of Stage 3's types. A page's `blocks` ARE the contract's, so this
+// exercises the mappers with no markdown step at either end — the code fence's text, the
+// table's rows and the bare separator go straight to Gutenberg and must come straight back.
+const RICH_PAGE = pageEnvelope('01M16P8FBKHW7Y9J1V4NRZ6DCM', 'ruled', 'A page with code, a table and a rule')
+  + [
+    '  - type: paragraph',
+    '    text: Above.',
+    '  - type: code',
+    '    text: const x = 1;',
+    // An empty code block, whose canonical YAML form is `''` — pinned by
+    // test/contract/canonical.test.mjs, and legal because `Code.text` has no `.min(1)`.
+    '  - type: code',
+    "    text: ''",
+    '  - type: separator',
+    '  - type: table',
+    '    head:',
+    '      - Plan',
+    '      - Price',
+    '    rows:',
+    '      - - Starter',
+    '        - $0',
+    '  - type: paragraph',
+    '    text: Below.',
+    '',
+  ].join('\n');
 
 test('a page that round-trips is imported, as a page', async () => {
   const { client, fetchImpl, written } = harness([
@@ -168,21 +290,39 @@ test('a page whose blocks do not survive the round trip is held back, and the re
   const { client, fetchImpl, written } = harness([
     ['content/posts/en-US/plain.md', PLAIN],
     ['content/pages/en-US/about.yaml', PLAIN_PAGE],
-    ['content/pages/en-US/ruled.yaml', RULED_PAGE],
+    ['content/pages/en-US/pictured.yaml', PICTURED_PAGE],
   ]);
 
   const result = await importPosts({ client, api, fetchImpl, locale: 'en-US' });
 
   assert.equal(result.refused.length, 1, 'exactly the page with an unsupported block is held back');
-  assert.equal(result.refused[0].path, 'content/pages/en-US/ruled.yaml');
-  assert.equal(result.refused[0].title, 'A page with a rule', 'the editor is told WHICH content, by its title');
-  assert.match(result.refused[0].reason, /separator/, 'and why, naming the block type');
+  assert.equal(result.refused[0].path, 'content/pages/en-US/pictured.yaml');
+  assert.equal(result.refused[0].title, 'A page with a picture', 'the editor is told WHICH content, by its title');
+  assert.match(result.refused[0].reason, /image/, 'and why, naming the block type');
 
   // Enforced by absence, exactly as for a post: no row, so no _jamground_id, so read-posts
   // cannot see it, so save cannot write it.
   const entries = JSON.parse(written['/wordpress/jp-import-data.json']);
   assert.deepEqual(entries.map((e) => e.slug).sort(), ['about', 'plain']);
   assert.equal(Object.keys(result.map).length, 2);
+});
+
+test('a page with a code block, a table and a separator now IMPORTS, as a page', async () => {
+  const { client, fetchImpl, written } = harness([
+    ['content/posts/en-US/plain.md', PLAIN],
+    ['content/pages/en-US/ruled.yaml', RICH_PAGE],
+  ]);
+
+  const result = await importPosts({ client, api, fetchImpl, locale: 'en-US' });
+
+  assert.deepEqual(result.refused, [], 'all three types survive the page round trip too');
+  const entries = JSON.parse(written['/wordpress/jp-import-data.json']);
+  const page = entries.find((e) => e.slug === 'ruled');
+  assert.equal(page.kind, 'page');
+  assert.match(page.content, /<!-- wp:code -->/);
+  assert.match(page.content, /<!-- wp:table -->/);
+  assert.match(page.content, /<hr class="wp-block-separator has-alpha-channel-opacity"\/>/);
+  assert.equal(page.source, RICH_PAGE, 'and the stored source is the fetched bytes verbatim');
 });
 
 

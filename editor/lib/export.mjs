@@ -11,11 +11,12 @@
 // become markdown behind a frontmatter fence, a page's are a field of its own YAML document —
 // and that assembly is the kind table's `serialise`, not a `switch` here.
 //
-// The four contract block types in scope — heading, paragraph, list, quote — are exactly
-// the ones `blocks-to-wp.mjs` (the reverse direction) and `blocks-to-mdast.mjs` cover: what
-// the seed content exercises. A block outside `attribute-guard.mjs`'s allowlist is refused
-// there; one inside it but outside these four throws here, naming itself, rather than being
-// silently dropped.
+// The seven contract block types in scope — heading, paragraph, list, quote, code, table,
+// separator — are exactly the ones `blocks-to-wp.mjs` (the reverse direction) and
+// `blocks-to-mdast.mjs` cover. `image` is the one core-derived type still missing, because it
+// needs a media upload path that does not exist (import.mjs:12). A block outside
+// `attribute-guard.mjs`'s allowlist is refused there; one inside it but outside these seven
+// throws here, naming itself, rather than being silently dropped.
 import { guardExportTree } from './attribute-guard.mjs';
 import { htmlToInline } from './html-to-inline.mjs';
 import { blocksToMdast } from './blocks-to-mdast.mjs';
@@ -46,10 +47,10 @@ function inlineText(nodes) {
 // allowlist before it can become an InlineText value.
 const htmlAttrToText = (html) => inlineText(htmlToInline(String(html ?? '')));
 
-// The exact reverse of `blocks-to-wp.mjs`'s `escHtml` — `citation` is a plain
-// string, not InlineText, so it is HTML-unescaped rather than run through `htmlToInline`.
-// Order matters: `&quot;` before `&gt;`/`&lt;` before `&amp;`, or a double-escaped entity
-// would be corrupted.
+// The exact reverse of `blocks-to-wp.mjs`'s `escHtml` — `citation` and a code block's `text`
+// are plain strings, not InlineText, so they are HTML-unescaped rather than run through
+// `htmlToInline`. Order matters: `&quot;` before `&gt;`/`&lt;` before `&amp;`, or a
+// double-escaped entity would be corrupted.
 const unescHtml = (s) =>
   s.replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
 
@@ -65,8 +66,15 @@ function listWpToContract(block) {
   return { ordered: !!block.attributes.ordered, items };
 }
 
+/** One `core/table` row (`{ cells: [{ content, tag }] }`) back to the contract's flat array of
+ *  `InlineText` cells. `htmlAttrToText` runs PER CELL — a cell's `content` is a rich-text
+ *  attribute holding inline HTML, exactly as a paragraph's is, so it goes through the same
+ *  mark-level allowlist. `tag` is not carried: the contract decides `th` vs `td` from which
+ *  of `head`/`rows` the cell is in, and `blocks-to-wp.mjs` writes it back on the way in. */
+const tableRowToCells = (row) => (row.cells ?? []).map((cell) => htmlAttrToText(cell.content));
+
 /** Map one guarded WordPress block to its contract block. Throws, naming
- *  the block, on anything outside the four in-scope types — fail loudly on any
+ *  the block, on anything outside the seven in-scope types — fail loudly on any
  *  unmapped block, rather than silently dropping it. */
 export function wpBlockToContractBlock(block) {
   switch (block.name) {
@@ -83,6 +91,31 @@ export function wpBlockToContractBlock(block) {
       const citation = rawCitation ? unescHtml(String(rawCitation)) : undefined;
       return citation ? { type: 'quote', text, citation } : { type: 'quote', text };
     }
+    // PLAIN TEXT, not InlineText. `Code.text` is a bare `z.string()`, and `core/code`'s
+    // `content` is HTML-escaped plain text, so this is `unescHtml` — the reverse of the
+    // `escHtml` the import direction applies. NEVER `htmlAttrToText`: running a code sample
+    // through the markdown-aware path would read `<strong>` in it as a mark and hand back
+    // `**bold**`, rewriting the sample. `?? ''` because an empty code block is legal.
+    case 'core/code':
+      return { type: 'code', text: unescHtml(String(block.attributes.content ?? '')) };
+    case 'core/table': {
+      // `head`/`body` are arrays of ROWS, not of cells. `Table.head` is one row and
+      // `Table.rows` is `.min(1)`, so anything else has no contract shape to go into —
+      // refuse, naming it, rather than flattening two header rows into one or emitting a
+      // table with an empty header, either of which would be silent loss. (`foot` needs no
+      // check here: the attribute guard already refuses it once it leaves its `[]` default.)
+      const head = block.attributes.head ?? [];
+      const body = block.attributes.body ?? [];
+      if (head.length !== 1) {
+        throw new Error(`export: a table needs exactly one header row, found ${head.length}`);
+      }
+      if (body.length === 0) throw new Error('export: a table needs at least one body row');
+      return { type: 'table', head: tableRowToCells(head[0]), rows: body.map(tableRowToCells) };
+    }
+    // No attributes at all: `Separator` carries only `type`, and the two classes core's
+    // markup always shows come from `opacity`/`tagName` still being at their defaults.
+    case 'core/separator':
+      return { type: 'separator' };
     default:
       throw new Error(`export: unmapped block "${block.name}" (03 §Export-Gutenberg step 2)`);
   }

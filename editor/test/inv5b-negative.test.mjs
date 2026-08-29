@@ -244,9 +244,15 @@ test('Control: valid inline marks (strong, em, code, link) pass all three layers
 });
 
 test('INV-5b Layers 1-3: comprehensive test of all violations', () => {
-  // Layer 1: unmapped block
-  const unmappedMarkup = serialize([createBlock('core/code')]);
-  assert.throws(() => markupToContractBlocks(api, unmappedMarkup), /unmapped block/);
+  // Layer 1: a block that CLEARS the attribute allowlist and is still refused by the mapper.
+  // `core/image` is the one such block left: its attributes are allowlisted, so layer 3 passes
+  // it through, and then `wpBlockToContractBlock` refuses it because there is nowhere for an
+  // image's bytes to live (`content/media/` does not exist; import.mjs:12). It replaces
+  // `core/code` here, which is now mapped — the assertion is about the arm, not the example.
+  const unmappedMarkup = serialize([
+    createBlock('core/image', { url: 'https://example.test/a.jpg', alt: 'a photo' }),
+  ]);
+  assert.throws(() => markupToContractBlocks(api, unmappedMarkup), /unmapped block "core\/image"/);
 
   // Layer 2: prohibited inline mark
   const badMarkMarkup = serialize([

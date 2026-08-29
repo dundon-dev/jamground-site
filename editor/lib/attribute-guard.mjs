@@ -51,6 +51,21 @@ function stripImageEphemera(name, attributes) {
   return next;
 }
 
+// `core/table`'s `caption` is a rich-text attribute with NO registered default, so
+// `isDefaulted` cannot see it — yet every table parses with `caption` present and empty,
+// whether or not anyone typed one, because the attribute is sourced from a `<figcaption>`
+// that simply isn't there. `caption` is absent from the table's allowlist because this
+// contract's `Table` has no caption field. So an empty one is the parser's artifact and is
+// dropped here; a caption someone actually TYPED survives this and is refused by the loop
+// below, which is the point — dropping it silently is the loss this module exists to stop.
+function stripEmptyTableCaption(name, attributes) {
+  if (name !== 'core/table' || !('caption' in attributes)) return attributes;
+  if (String(attributes.caption ?? '') !== '') return attributes;
+  const next = { ...attributes };
+  delete next.caption;
+  return next;
+}
+
 // Attributes still equal to their registered default do not count as set.
 // Compared structurally, since a default can be an array or object as
 // well as a primitive.
@@ -66,7 +81,7 @@ function isDefaulted(blockType, key, value) {
  *  `getBlockType` is `api.getBlockType` from `@wordpress/blocks`. */
 export function guardBlockAttributes(api, block) {
   const { name, attributes = {} } = block;
-  const stripped = stripImageEphemera(name, attributes);
+  const stripped = stripEmptyTableCaption(name, stripImageEphemera(name, attributes));
 
   const blockType = api.getBlockType(name);
   const allowed = isJamgroundBlock(name)
