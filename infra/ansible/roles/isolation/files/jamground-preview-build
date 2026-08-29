@@ -55,7 +55,6 @@
 set -euo pipefail
 
 previews_root=/srv/previews
-work_root=/var/lib/jamground/preview-work
 build_lock="$previews_root/.build.lock"
 content_key=/etc/jamground/deploy-keys/content_ed25519
 deploy_env=/etc/jamground/deploy.env
@@ -87,6 +86,28 @@ esac
 : "${JAMGROUND_SITE_CHECKOUT:?JAMGROUND_SITE_CHECKOUT must name the site repository checkout}"
 : "${JAMGROUND_CONTENT_CHECKOUT:?JAMGROUND_CONTENT_CHECKOUT must name the content repository checkout}"
 
+# WHERE A PREVIEW IS BUILT, AND WHY IT IS INSIDE THE SITE CHECKOUT.
+#
+# Astro's ssrMoveAssets RENAMES assets out of "$JAMGROUND_SITE_CHECKOUT/.astro/.prerender/" into
+# the out directory. rename(2) cannot cross a MOUNT POINT — which is not the same constraint as
+# "cannot cross a filesystem", and the difference is the whole reason this path is what it is.
+#
+# Two separate mount boundaries bit here, in order:
+#
+#   1. /srv/previews is a fixed-size loopback image (roles/isolation), a genuinely different
+#      filesystem. Building straight into it failed with EXDEV.
+#   2. Moving the build off it was NOT enough. The consumer runs under a systemd sandbox
+#      (ProtectSystem=strict + ReadWritePaths, roles/webhook), and systemd bind-mounts EVERY
+#      ReadWritePath separately. Two writable paths on one disk are two mount points, so
+#      /var/lib/... -> /srv/jamground/... renamed no better than the image did. Proven on the box:
+#      the same rename(2) succeeds outside the sandbox and returns EXDEV inside it.
+#
+# A subdirectory of the site checkout is inside the SAME bind mount as .astro/.prerender, by
+# construction rather than by coincidence — which is why this is derived from
+# $JAMGROUND_SITE_CHECKOUT and not a path of its own that someone would have to keep in step.
+# `.astro/` and `dist/` already live here for the same reason; this joins them, and every exit
+# path below removes it.
+work_root="$JAMGROUND_SITE_CHECKOUT/.preview-work"
 work="$work_root/$pr"
 
 fail() {

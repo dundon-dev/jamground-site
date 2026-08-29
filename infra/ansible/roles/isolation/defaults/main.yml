@@ -7,17 +7,6 @@
 # two roles both need, because a role must not depend on another role's variable staying named
 # the same.
 isolation_previews_root: /srv/previews
-
-# Where a preview is BUILT, as opposed to where it is served from. Deliberately NOT under
-# isolation_previews_root: that path is a separate loopback filesystem, and Astro's own asset step
-# renames files out of the site checkout's .astro/ into the out directory. rename(2) cannot cross a
-# mount point, so a build whose outDir sat on the previews image failed with EXDEV every time —
-# inside Astro, before this script could report anything useful. The build therefore happens on the
-# same filesystem as the checkout, and the finished output is copied across.
-#
-# The fixed-size image still bounds what is SERVED, which is what it was sized for. This directory
-# holds one preview's output transiently and the script removes it on every path out.
-isolation_preview_work_root: /var/lib/jamground/preview-work
 isolation_previews_image: /var/lib/jamground/previews.img
 
 # The preview build itself: the script this role now ships, and the two checkouts it reads. Both

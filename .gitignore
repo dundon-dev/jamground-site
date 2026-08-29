@@ -19,3 +19,7 @@ editor/dist/
 # location is a sibling directory (`../jamground-content`, JAMGROUND_CONTENT_DIR),
 # but a clone placed here must not be committable back into the wrong repository.
 /content
+
+# Transient: one preview build's output, inside the checkout because rename(2) cannot
+# cross a mount point (see roles/isolation/files/jamground-preview-build).
+.preview-work/

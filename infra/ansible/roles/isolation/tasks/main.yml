@@ -54,16 +54,6 @@
     mode: '0644'
   notify: reload systemd daemon
 
-- name: Ensure the preview build's work directory exists, off the previews filesystem
-  # Off it on purpose — see isolation_preview_work_root in this role's defaults. Owned by the
-  # build account because jamground-preview-build runs unprivileged.
-  ansible.builtin.file:
-    path: "{{ isolation_preview_work_root }}"
-    state: directory
-    owner: jamground-build
-    group: jamground-build
-    mode: '0755'
-
 - name: Ship the preview per-build unit template
   ansible.builtin.template:
     src: "jamground-preview-build@.service.j2"
