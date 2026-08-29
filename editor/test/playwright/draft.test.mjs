@@ -61,8 +61,8 @@ test('draft: the draft post is imported, listed and editable', async () => {
   await buildBundle();
 
   // Asked of the repository, not written down: this used to be the literal 2, which was a
-  // fact about a seed that no longer exists. The repository now holds three entities across
-  // two kinds, and a literal here would be wrong again the next time the seed moves.
+  // fact about a seed that no longer exists. The repository now holds four entities across
+  // three kinds, and a literal here would be wrong again the next time the seed moves.
   const seedEntities = await listSeedEntities();
 
   const { server, port } = await startServer();
@@ -105,7 +105,8 @@ test('draft: the draft post is imported, listed and editable', async () => {
       const ids = Object.values(map);
       const phpEntries = ids.map((id) =>
         `$out[${JSON.stringify(String(id))}] = ['status'=>get_post_status(${id}),'jid'=>get_post_meta(${id},'_jamground_id',true),`
-        + `'kind'=>get_post_meta(${id},'_jamground_kind',true),'type'=>get_post_type(${id})];`
+        + `'kind'=>get_post_meta(${id},'_jamground_kind',true),'type'=>get_post_type(${id}),`
+        + `'canvas'=>post_type_supports(get_post_type(${id}),'editor')];`
       ).join('\n');
       const code = `<?php require '${root}/wp-load.php'; $out = []; ${phpEntries} echo json_encode($out);`;
       const s = await c.run({ code });
@@ -115,6 +116,17 @@ test('draft: the draft post is imported, listed and editable', async () => {
     // Identify which is draft and which is publish
     const draftPostId = Object.entries(postStatuses).find(([, meta]) => meta.status === 'draft')?.[0];
     const publishPostId = Object.entries(postStatuses).find(([, meta]) => meta.status === 'publish')?.[0];
+
+    // AND, SEPARATELY, WHICH ROWS HAVE A CANVAS AT ALL. Step 4 below opens a row in the block
+    // editor, and a block editor only exists for a post type that supports one.
+    // `jamground_author` deliberately supports `title` alone — an author is a person, not a
+    // document, and the contract gives it nowhere to keep a body — so opening one would wait
+    // ninety seconds for a canvas that can never appear. Asked of WordPress rather than
+    // written down here, so a kind added later is classified by its own registration; the
+    // first entity the repository lists is now an author, which is exactly how this would
+    // have been discovered the hard way.
+    const draftCanvasPostId = Object.entries(postStatuses).find(([, m]) => m.status === 'draft' && m.canvas)?.[0];
+    const publishCanvasPostId = Object.entries(postStatuses).find(([, m]) => m.status === 'publish' && m.canvas)?.[0];
 
     // DERIVED FROM THE CONTENT, NOT ASSUMED OF IT. This test asserted that a draft exists, and
     // pinned the contract id of the seed draft that used to. The content repository ships no
@@ -209,10 +221,10 @@ test('draft: the draft post is imported, listed and editable', async () => {
     // without a draft this navigated to `post.php?post=undefined`, then waited ninety seconds
     // for an editor that could never load. Guarding the navigation is the other half of
     // removing the assertion that a draft exists — the half I missed first time.
-    if (draftPostId) {
+    if (draftCanvasPostId) {
       await page.evaluate(async (id) => {
         await window.jamgroundClient.goTo('/wp-admin/post.php?post=' + id + '&action=edit');
-      }, draftPostId);
+      }, draftCanvasPostId);
 
       let draftEditorFrame = null;
       let draftCanvasFrame = null;
@@ -235,10 +247,12 @@ test('draft: the draft post is imported, listed and editable', async () => {
       assert(draftCanvasFrame, 'the draft post editor canvas should be reachable');
     }
 
-    // Open published post in editor
+    // Open a published row that HAS a canvas in the editor.
+    assert(publishCanvasPostId,
+      'the seed content has published pages and posts, so at least one published row must have a block editor');
     await page.evaluate(async (id) => {
       await window.jamgroundClient.goTo('/wp-admin/post.php?post=' + id + '&action=edit');
-    }, publishPostId);
+    }, publishCanvasPostId);
 
     let publishEditorFrame = null;
     let publishCanvasFrame = null;

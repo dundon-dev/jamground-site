@@ -20,9 +20,10 @@ const BLOB_BASE = CONTENT_BLOB_BASE;
  * nothing downstream can derive it differently.
  *
  * The membership test per kind is its directory plus its extension, both from the kind table:
- * other locales, other directories (`navigation/`, `settings/`, `authors/` — no kind claims
- * them yet), files at the repository root, and a file of the right kind with the wrong
- * extension are all excluded by it.
+ * other locales, other directories (`navigation/`, `settings/` — no kind claims them yet),
+ * files at the repository root, and a file of the right kind with the wrong extension are all
+ * excluded by it. Note that `authors/` and `pages/` share the `.yaml` extension and are told
+ * apart by their directory, which is why the test is both halves rather than the extension.
  *
  * @param {Function} fetchImpl - injected for testing; the browser's fetch or a Node fetch
  * @param {string} locale - 'en-US', 'fr-FR', etc.

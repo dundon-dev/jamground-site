@@ -17,6 +17,9 @@ const { createBlock, serialize, parse, getBlockType } = require('@wordpress/bloc
 registerCoreBlocks();
 
 const { importPosts } = await import('../lib/import.mjs');
+const { exportEntity } = await import('../lib/export.mjs');
+const { blocksToMarkup } = await import('../lib/blocks-to-wp.mjs');
+const { parseEntity } = await import('../lib/entity.mjs');
 const api = { createBlock, serialize, parse, getBlockType };
 
 const envelope = (id, slug, title) => [
@@ -180,4 +183,113 @@ test('a page whose blocks do not survive the round trip is held back, and the re
   const entries = JSON.parse(written['/wordpress/jp-import-data.json']);
   assert.deepEqual(entries.map((e) => e.slug).sort(), ['about', 'plain']);
   assert.equal(Object.keys(result.map).length, 2);
+});
+
+
+// --- authors -----------------------------------------------------------------------------
+//
+// A third kind through the same admission check, and the first one that is not a document at
+// all. `Author` has no `blocks` field, so the whole file is the envelope, `toBlocks` is `[]`
+// and the row's `post_content` is the empty string. The check is unchanged; what it compares
+// against is `write(frontmatter, Author)`.
+
+const authorFile = (id, slug, title, extra = '') => [
+  `id: ${id}`,
+  'translationOf: 01M16P85G0EWFHCEP57ZD9ZTNF',
+  'locale: en-US',
+  `slug: ${slug}`,
+  `title: ${title}`,
+  'status: published',
+  "publishedAt: '2026-08-28T12:00:00Z'",
+  "updatedAt: '2026-08-28T12:00:00Z'",
+  `name: ${title}`,
+  'role: Editor',
+  'bio: Writes the example content.',
+].join('\n') + '\n' + extra;
+
+const PLAIN_AUTHOR = authorFile('01M16P8BF5ZQ2W7DTKX6M3RNH4', 'example-author', 'Example Author');
+
+// The same author, carrying a body. `Author` is not `.strict()`, so zod STRIPS the unknown
+// `blocks` key and the file parses — which is exactly the silent-loss shape this whole check
+// exists for: nothing complains, and the first save writes the file back without it. The
+// round trip is what notices, because the bytes it produces no longer match the bytes it read.
+const BODIED_AUTHOR = authorFile('01M16P8CDPBQ8V1KYNW3T5FJ2Z', 'bodied-author', 'A Bodied Author',
+  'blocks:\n  - type: paragraph\n    text: Nowhere to keep this.\n');
+
+test('an author imports as an author, and its body is empty', async () => {
+  const { client, fetchImpl, written } = harness([
+    ['content/posts/en-US/plain.md', PLAIN],
+    ['content/authors/en-US/example.yaml', PLAIN_AUTHOR],
+  ]);
+
+  const result = await importPosts({ client, api, fetchImpl, locale: 'en-US' });
+
+  assert.deepEqual(result.refused, [], 'an author with no blocks survives its own round trip');
+  assert.equal(Object.keys(result.map).length, 2);
+
+  const entries = JSON.parse(written['/wordpress/jp-import-data.json']);
+  const bySlug = Object.fromEntries(entries.map((e) => [e.slug, e]));
+
+  assert.equal(bySlug['example-author'].kind, 'author');
+  assert.equal(bySlug['example-author'].postType, 'jamground_author',
+    'an author is filed under its own WordPress type, which is what puts it in its own menu');
+  assert.equal(bySlug['example-author'].path, 'content/authors/en-US/example.yaml');
+  assert.equal(bySlug['example-author'].title, 'Example Author');
+
+  // THE POINT OF THE KIND: no body. `blocksToMarkup(api, [])` is the empty string, so the row
+  // WordPress is asked to create carries no `post_content` at all.
+  assert.equal(bySlug['example-author'].content, '',
+    'an author is not a document — its post_content must be empty, not a canvas of blocks');
+
+  // And the fetched bytes verbatim, fenceless, as for a page.
+  assert.equal(bySlug['example-author'].source, PLAIN_AUTHOR);
+  assert.equal(bySlug['example-author'].source.startsWith('---'), false);
+});
+
+test('an author carrying a body is held back by name, and the rest still import', async () => {
+  const { client, fetchImpl, written } = harness([
+    ['content/posts/en-US/plain.md', PLAIN],
+    ['content/authors/en-US/example.yaml', PLAIN_AUTHOR],
+    ['content/authors/en-US/bodied.yaml', BODIED_AUTHOR],
+  ]);
+
+  const result = await importPosts({ client, api, fetchImpl, locale: 'en-US' });
+
+  assert.equal(result.refused.length, 1, 'exactly the author whose file would be rewritten is held back');
+  assert.equal(result.refused[0].path, 'content/authors/en-US/bodied.yaml');
+  assert.equal(result.refused[0].title, 'A Bodied Author', 'the editor is told WHICH person, by name');
+  assert.match(result.refused[0].reason, /read and written back unchanged/,
+    'and why: importing it would silently drop what the file carries');
+
+  // Enforced by absence: no row, so no _jamground_id, so read-posts cannot see it, so save
+  // cannot write it — which is what stops the body being deleted from the repository.
+  const entries = JSON.parse(written['/wordpress/jp-import-data.json']);
+  assert.deepEqual(entries.map((e) => e.slug).sort(), ['example-author', 'plain']);
+  assert.equal(Object.keys(result.map).length, 2);
+});
+
+test('an author whose post_content is not empty is refused at export, naming the person', async () => {
+  // The other end of the same fact, on the SAVE path. Nothing in wp-admin can put a block on
+  // an author this stage — the post type supports `title` alone — but the serialiser is the
+  // last thing between a body and the file, and `write(frontmatter, Author)` has nowhere to
+  // put one. Dropping it would be the silent loss; refusing names the person instead.
+  const { frontmatter } = parseEntity('author', 'content/authors/en-US/example.yaml', PLAIN_AUTHOR);
+  const markup = blocksToMarkup(api, [{ type: 'paragraph', text: 'Typed onto the canvas.' }]);
+  assert.notEqual(markup, '', 'the fixture must actually carry a body, or this asserts nothing');
+
+  assert.throws(
+    () => exportEntity({
+      kind: 'author',
+      api,
+      markup,
+      frontmatter,
+      previousSlug: frontmatter.slug,
+      updatedAt: frontmatter.updatedAt,
+    }),
+    (err) => {
+      assert.match(err.message, /Example Author/, 'the refusal must name WHICH person');
+      assert.equal(err.editorial, true, 'said as itself, not replaced by "please try again"');
+      return true;
+    },
+  );
 });

@@ -34,6 +34,41 @@ blocks:
     text: Original content.
 `;
 
+// An author: a whole YAML document like a page, with NO blocks anywhere in it, and three
+// fields — name, role, bio — that no control in wp-admin can reach this stage. Everything
+// below has to carry those three through untouched, which is the property this fixture exists
+// to pin: read-posts names `title` and `slug` and nothing else, so it can drop nothing else.
+const SOURCE_AUTHOR = `id: 01M143VMBG3P9TE12W2BQ3SWX8
+translationOf: 01M143VNARFS53GN4MRZ48TMJ9
+locale: en-US
+slug: example-author
+title: Example Author
+status: published
+publishedAt: '2026-08-28T12:00:00Z'
+updatedAt: '2026-08-28T12:00:00Z'
+name: Example Author
+role: Editor
+bio: Writes and edits the example content used to demonstrate this repository.
+`;
+
+const authorRow = (over = {}) => ({
+  id: 13,
+  // Empty, because an author is not a document — that is what import wrote and what a save
+  // must read back.
+  content: '',
+  title: 'Example Author',
+  slug: 'example-author',
+  postType: 'jamground_author',
+  ...over,
+  meta: {
+    _jamground_id: '01M143VMBG3P9TE12W2BQ3SWX8',
+    _jamground_source: SOURCE_AUTHOR,
+    _jamground_path: 'content/authors/en-US/example.yaml',
+    _jamground_kind: 'author',
+    ...(over.meta || {}),
+  },
+});
+
 // Every fixture below carries the four meta values import.mjs writes plus WordPress's own
 // post_type, because readPosts now cross-checks three of them against each other. A fixture
 // that omitted one would be asserting against a row import.mjs could not have produced.
@@ -79,7 +114,7 @@ test('readPosts writes the post types and the PHP reader, then runs it, in that 
   // The post types travel as DATA, exactly as import.mjs's own values do — nothing composes
   // PHP around a value here.
   assert.equal(client.calls.writeFile[0].path, '/wordpress/jp-read-posts-types.json');
-  assert.deepEqual(JSON.parse(client.calls.writeFile[0].content), ['post', 'page']);
+  assert.deepEqual(JSON.parse(client.calls.writeFile[0].content), ['post', 'page', 'jamground_author']);
 
   assert.equal(client.calls.writeFile[1].path, '/wordpress/jp-read-posts.php');
   assert.match(client.calls.writeFile[1].content, /get_posts/);
@@ -271,4 +306,78 @@ test('readPosts throws when _jamground_kind is missing altogether', async () => 
     /_jamground_kind says ""/,
     'a row with no declared kind is not silently inferred from its path',
   );
+});
+
+
+// --- authors ------------------------------------------------------------------------------
+//
+// The third kind, and still the same one line laying `post_title` and `post_name` over the
+// baseline envelope. What is new is what MUST NOT happen: an author carries `name`, `role` and
+// `bio`, none of which has a control anywhere in the allowlisted editing surface, and all of
+// which would be deleted from the repository on the first save if this module rebuilt the
+// envelope instead of carrying it.
+
+test('readPosts shapes an author row the same way, carrying the fields wp-admin cannot edit', async () => {
+  const client = fakeClient([authorRow()]);
+
+  const [author] = await readPosts({ client });
+
+  assert.equal(author.kind, 'author');
+  assert.equal(author.id, 13);
+  assert.equal(author.slug, 'example-author');
+  assert.equal(author.content, '', 'an author row has no block markup to read back');
+  assert.equal(author.frontmatter.id, '01M143VMBG3P9TE12W2BQ3SWX8');
+  assert.equal(author.frontmatter.title, 'Example Author');
+  assert.equal(author.frontmatter.status, 'published');
+
+  // The three fields this stage deliberately does not edit, carried from the baseline.
+  assert.equal(author.frontmatter.name, 'Example Author');
+  assert.equal(author.frontmatter.role, 'Editor');
+  assert.equal(
+    author.frontmatter.bio,
+    'Writes and edits the example content used to demonstrate this repository.',
+  );
+
+  assert.equal(author.frontmatter.blocks, undefined, 'an author has no blocks field to begin with');
+});
+
+test('readPosts carries an author title and slug from WordPress, with no second code path', async () => {
+  const client = fakeClient([authorRow({ title: 'Renamed Person', slug: 'renamed-person' })]);
+
+  const [author] = await readPosts({ client });
+
+  assert.equal(author.frontmatter.title, 'Renamed Person');
+  assert.equal(author.frontmatter.slug, 'renamed-person');
+  assert.equal(author.slug, 'example-author', "the top-level slug stays the baseline's, for previousSlug");
+  // Still carried, through a rename.
+  assert.equal(author.frontmatter.role, 'Editor');
+});
+
+test('readPosts throws when an author row is filed under WordPress\'s own post type', async () => {
+  // The corruption this closes: `post_type => post` on a row whose file is
+  // `content/authors/en-US/example.yaml` would be written back through the POST serialiser —
+  // fenced markdown over a person\'s YAML file.
+  const client = fakeClient([authorRow({ postType: 'post' })]);
+
+  await assert.rejects(() => readPosts({ client }), (err) => {
+    assert.match(err.message, /post 13/);
+    assert.match(err.message, /_jamground_kind says "author"/);
+    assert.match(err.message, /_jamground_path .*implies "author"/);
+    assert.match(err.message, /post_type "post" implies "post"/);
+    return true;
+  }, 'all three readings must be named, not just the one that lost');
+});
+
+test('readPosts throws when an author is declared a page — the two share an extension', async () => {
+  // `authors/` and `pages/` are both `.yaml`, so the extension alone cannot tell them apart
+  // and the directory is doing the work. A row declaring `page` over an `authors/` path would
+  // be exported through `write({...frontmatter, blocks}, Page)`, which would demand blocks the
+  // person has not got and lose the fields they have.
+  const client = fakeClient([authorRow({ postType: 'page', meta: { _jamground_kind: 'page' } })]);
+
+  await assert.rejects(() => readPosts({ client }), (err) => {
+    assert.match(err.message, /_jamground_kind says "page"/);
+    assert.match(err.message, /content\/authors\/en-US\/example\.yaml.*implies "author"/);
+    return true;
+  });
 });

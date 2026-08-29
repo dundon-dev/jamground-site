@@ -1,12 +1,12 @@
 /* What the content repository actually holds, asked OF THE REPOSITORY and THROUGH THE KIND
  * TABLE — never written down here.
  *
- * Three Playwright files need this and each used to carry its own copy filtered to
+ * Four Playwright files need this and each used to carry its own copy filtered to
  * `content/posts/**.md`. That was a fact about one stage of this editor rather than about
- * import: pages are imported now, so a posts-only count reports the pages as entities that
- * failed to arrive, and three copies of the same wrong filter have to be found and fixed
+ * import: pages and authors are imported now, so a posts-only count reports both as entities
+ * that failed to arrive, and four copies of the same wrong filter have to be found and fixed
  * separately. Deriving from `KINDS` means a kind added to editor/lib is covered here without
- * editing any of them.
+ * editing any of them — the author kind was, and none of the four needed a new count.
  *
  * Not a test file, and it never runs as one: editor's test script is
  * `node --test 'test/*.test.mjs'`, which is non-recursive, and this sits a directory deeper.

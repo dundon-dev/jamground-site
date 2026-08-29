@@ -458,7 +458,26 @@ test('the write path: start a change, save, send for review, publish — through
     // read-posts.mjs already reads from. It is not DOM access, which the cross-origin
     // boundary forecloses.
     const MARKER = 'JamgroundWritePathEdit';
-    const editedContractId = Object.keys(importMap)[0];
+    // THE ROW EDITED MUST BE ONE THAT CAN HOLD BLOCKS. This wrote `post_content` into
+    // whichever entity the repository happened to list first, which was fine while everything
+    // imported was a document. It is not any more: `content/authors/` sorts first, and
+    // `jamground_author` supports `title` alone — an author is a person, and the contract
+    // gives it nowhere to keep a body, so a paragraph written onto one is refused at export by
+    // name rather than committed. Asked of WordPress, which is the thing that actually knows
+    // which types have an editor, rather than pinned to a kind name here.
+    const canvasByPostId = await page.evaluate(async (map) => {
+      const c = window.jamgroundClient;
+      const root = await c.documentRoot;
+      const ids = Object.values(map);
+      const entries = ids.map((id) =>
+        `$out[${JSON.stringify(String(id))}] = post_type_supports(get_post_type(${id}), 'editor');`
+      ).join('\n');
+      const s = await c.run({ code: `<?php require '${root}/wp-load.php'; $out = []; ${entries} echo json_encode($out);` });
+      return JSON.parse(s.text);
+    }, importMap);
+    const editedContractId = Object.keys(importMap).find((cid) => canvasByPostId[String(importMap[cid])]);
+    assert(editedContractId,
+      'the repository must hold at least one entity whose post type has a block editor to type into');
     const editedPostId = importMap[editedContractId];
     await page.evaluate(async ({ postId, marker }) => {
       const c = window.jamgroundClient;

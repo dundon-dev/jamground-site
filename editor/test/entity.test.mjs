@@ -254,9 +254,80 @@ test('parseEntity refuses a page with no blocks, naming the file', () => {
   );
 });
 
-test('parseEntity refuses an unknown kind rather than guessing one', () => {
+// --- authors -----------------------------------------------------------------------------
+//
+// An author is a whole YAML document like a page, and NOT a document like a page: `Author` has
+// no `blocks` field, so `parseEntity`'s `const { blocks, ...frontmatter }` finds nothing to
+// lift and the whole file is the envelope plus the author's own fields. Nothing here is a new
+// code path — that is the claim being made.
+
+const VALID_AUTHOR = `id: 01M143VMBG3P9TE12W2BQ3SWX8
+translationOf: 01M143VNARFS53GN4MRZ48TMJ9
+locale: en-US
+slug: example-author
+title: Example Author
+status: published
+publishedAt: '2026-08-28T12:00:00Z'
+updatedAt: '2026-08-28T12:00:00Z'
+name: Example Author
+role: Editor
+bio: Writes and edits the example content used to demonstrate this repository.
+`;
+
+test('parseEntity parses a fenceless .yaml author, and never asks it for a fence', () => {
+  const result = parseEntity('author', '/content/authors/en-US/example.yaml', VALID_AUTHOR);
+
+  assert.equal(result.kind, 'author');
+  assert.equal(result.body, '', 'an author has no body following its envelope');
+  assert.equal(result.source, VALID_AUTHOR);
+
+  // The fence splitter is the POST kind's parser and is unreachable from here. Asserted as
+  // the absence of that specific error rather than merely "it did not throw", because
+  // "Missing frontmatter fence" is exactly what a single shared parser used to say about
+  // every `.yaml` file it was handed.
+  assert.doesNotThrow(() => parseEntity('author', '/content/authors/en-US/example.yaml', VALID_AUTHOR));
+});
+
+test('parseEntity gives an author no blocks at all, and keeps its own fields on the envelope', () => {
+  const result = parseEntity('author', '/content/authors/en-US/example.yaml', VALID_AUTHOR);
+
+  // `Author` has no `blocks` field, so the destructure finds none — the same `undefined` a
+  // post gets, and the reason `toBlocks: () => []` is the whole of an author's canvas.
+  assert.equal(result.blocks, undefined, 'an author is not a document and carries no blocks');
+
+  // `name`, `role` and `bio` are not edited in wp-admin yet. They stay on the frontmatter,
+  // which is what export writes back out untouched — a field dropped here would be a field
+  // deleted from the repository on the first save.
+  assert.deepEqual(result.frontmatter, {
+    id: '01M143VMBG3P9TE12W2BQ3SWX8',
+    translationOf: '01M143VNARFS53GN4MRZ48TMJ9',
+    locale: 'en-US',
+    slug: 'example-author',
+    title: 'Example Author',
+    status: 'published',
+    publishedAt: '2026-08-28T12:00:00Z',
+    updatedAt: '2026-08-28T12:00:00Z',
+    name: 'Example Author',
+    role: 'Editor',
+    bio: 'Writes and edits the example content used to demonstrate this repository.',
+  });
+});
+
+test('parseEntity refuses an author with no name, naming the file', () => {
+  const nameless = VALID_AUTHOR.replace(/^name: .*$/m, 'name: \'\'');
   assert.throws(
-    () => parseEntity('author', '/content/authors/en-US/john.yaml', VALID_PAGE),
-    /unknown content kind "author"/,
+    () => parseEntity('author', '/content/authors/en-US/nameless.yaml', nameless),
+    /Schema validation failed for \/content\/authors\/en-US\/nameless\.yaml.*name/s,
+  );
+});
+
+test('parseEntity refuses an unknown kind rather than guessing one', () => {
+  // The unknown kind used to be spelled 'author', which stopped being unknown the moment
+  // authors were added — the assertion is about a kind NOBODY declared, so it needs a name
+  // no row claims. `navigation` is the next thing in the content repository that has no kind,
+  // and if a row ever claims it this test says so instead of passing on a stale example.
+  assert.throws(
+    () => parseEntity('navigation', '/content/navigation/en-US/primary.yaml', VALID_PAGE),
+    /unknown content kind "navigation"/,
   );
 });

@@ -2,7 +2,8 @@
 // know how a kind differs from another.
 //
 // Posts are markdown with a frontmatter fence; pages are whole YAML documents whose `blocks`
-// field IS the contract block list. That is the only real difference between them, and before
+// field IS the contract block list; an author is a whole YAML document with no blocks at all,
+// because a person is not a document. Those are the only real differences between them, and before
 // this table it would have had to be re-derived — as a `switch`, or an extension test, or a
 // second parser — in content-source.mjs, entity.mjs, import.mjs, read-posts.mjs and export.mjs
 // independently. Five switches on the same fact drift apart one commit at a time, and the
@@ -12,7 +13,7 @@
 //
 // Adding a kind means adding a row. It must NOT mean adding a branch anywhere else.
 import yaml from 'yaml';
-import { Page, Post } from '../../src/contract/entities.ts';
+import { Author, Page, Post } from '../../src/contract/entities.ts';
 import { write } from '../../src/lib/canonical.ts';
 import { mdastToBlocks } from '../../src/lib/mdast-to-blocks.ts';
 import { VOCAB, editorialError } from './vocabulary.mjs';
@@ -138,6 +139,34 @@ export const KINDS = {
       // `Object.keys(schema.shape)`, and `Page = Envelope.extend({ blocks })` puts `blocks`
       // last by construction.
       return write({ ...frontmatter, blocks }, Page);
+    },
+  },
+
+  author: {
+    dir: 'authors',
+    ext: '.yaml',
+    schema: Author,
+    wpPostType: 'jamground_author',
+    parse: parseYamlDocument,
+    // AN AUTHOR IS NOT A DOCUMENT. `Author` has no `blocks` field — there is no list of
+    // blocks on disk to build a canvas from, and `blocksToMarkup(api, [])` is `''`, so the
+    // row's `post_content` is empty and stays empty. That is the whole of the difference
+    // between this kind and a page, and it is stated here rather than as a branch in import.
+    toBlocks: () => [],
+    serialise: ({ frontmatter, blocks }) => {
+      // The other half of the same fact. If content ever DID reach an author's body there
+      // would be nowhere on disk to put it: `write(frontmatter, Author)` cannot carry it, so
+      // it would be dropped at the next save with nothing said — the silent-loss case this
+      // project refuses everywhere else. Refusing here makes it a save that fails and names
+      // the person, rather than a save that succeeds and quietly discards their writing.
+      // (The import-time round-trip check runs this same serialiser, so an author file that
+      // somehow carried a body is held back before it ever gets a WordPress row.)
+      if (blocks.length > 0) {
+        throw editorialError(`${VOCAB.authorHasNoBody} ${frontmatter.title}`);
+      }
+      // `name`, `role`, `bio`, `avatar` and every other envelope field are carried straight
+      // through from the baseline — this writer never names them, so it can never drop one.
+      return write(frontmatter, Author);
     },
   },
 };

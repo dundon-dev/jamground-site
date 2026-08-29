@@ -40,17 +40,27 @@ test('the endpoints the content source reads are the two public GitHub ones, for
  * the exclusions — another locale, a directory no kind claims, a file at the repository root —
  * plus one that only exists once a kind has an extension of its own: the right directory with
  * the wrong extension.
+ *
+ * Authors have just crossed the same line pages did. `content/authors/en-US/john.yaml` sat in
+ * the excluded half labelled "no kind claims authors yet" — again a scope boundary written as
+ * though it were a rule, and again the boundary was the gap: the site serves an author page
+ * that wp-admin could not show. It is admitted now, and the exclusions it leaves behind are
+ * the real ones — another locale, and the right directory with the wrong extension. Authors
+ * and pages SHARE the `.yaml` extension, so this fixture is also what pins that the membership
+ * test is directory-and-extension rather than extension alone.
  */
 const TREE = [
   { path: 'content/posts/en-US/first-post.md' },     // in: post
   { path: 'content/posts/en-US/second-post.md' },    // in: post
   { path: 'content/pages/en-US/home.yaml' },         // in: page
   { path: 'content/pages/en-US/about.yaml' },        // in: page
+  { path: 'content/authors/en-US/john.yaml' },       // in: author
   { path: 'content/posts/fr-FR/french-post.md' },    // out: another locale
   { path: 'content/pages/fr-FR/accueil.yaml' },      // out: another locale
+  { path: 'content/authors/fr-FR/jean.yaml' },       // out: another locale
   { path: 'content/pages/en-US/notes.md' },          // out: pages are .yaml, not .md
   { path: 'content/posts/en-US/notes.yaml' },        // out: posts are .md, not .yaml
-  { path: 'content/authors/en-US/john.yaml' },       // out: no kind claims authors yet
+  { path: 'content/authors/en-US/notes.md' },        // out: authors are .yaml, not .md
   { path: 'content/navigation/en-US/primary.yaml' }, // out: not a document
   { path: 'content/settings/site.yaml' },            // out: not a document
   { path: 'nav.md' },                                // out: repository root
@@ -65,6 +75,7 @@ const ADMITTED = [
   ['post', 'content/posts/en-US/second-post.md'],
   ['page', 'content/pages/en-US/home.yaml'],
   ['page', 'content/pages/en-US/about.yaml'],
+  ['author', 'content/authors/en-US/john.yaml'],
 ];
 
 function treeFetch(calls) {
@@ -89,7 +100,7 @@ function treeFetch(calls) {
   };
 }
 
-test('listEntities fetches the tree and filters to this locale\'s posts AND pages', async () => {
+test('listEntities fetches the tree and filters to this locale\'s posts, pages AND authors', async () => {
   const calls = [];
   const result = await listEntities(treeFetch(calls), 'en-US');
 

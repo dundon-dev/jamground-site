@@ -74,6 +74,16 @@ export const VOCAB = {
   // page cannot be written at all.
   pageNeedsContent:
     'a page cannot be saved with nothing on it — put some content back on the page first.',
+
+  // A third refusal, belonging to authors, and reaching the editor the same way.
+  //
+  // An author is a person, not a document — the contract gives them a name, a role and a
+  // short biography, and nowhere at all to keep a page of writing. Text put on the canvas
+  // would have no home on disk, so a save that accepted it would have to throw it away
+  // silently. The name of the person is appended, because an editor with several open cannot
+  // act on "an author".
+  authorHasNoBody:
+    'an author is a person, not a page — there is nowhere to keep writing on this screen, so take it off and save again:',
 };
 
 /**
