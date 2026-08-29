@@ -25,12 +25,22 @@ content_repos_content_key: "{{ content_repos_keys_dir }}/content_ed25519"
 content_repos_deploy_current: /srv/jamground/current
 content_repos_deploy_script: /usr/local/bin/jamground-deploy
 
-# The three things a build WRITES into the site checkout, none of them tracked and all three
-# gitignored, which is why the `force: true` clones above leave them alone. Named here because
-# they are shared: jamground-deploy writes them on the production path and jamground-preview-build
-# reads and rewrites them on the preview path, and BOTH run as jamground-build — so all three must
-# belong to that account rather than to whoever happened to build first.
+# Everything a build WRITES into the site checkout: untracked, gitignored, which is why the
+# `force: true` clones above leave them alone. Named here because they are shared —
+# jamground-deploy writes them on the production path and jamground-preview-build reads and
+# rewrites them on the preview path, and BOTH run as jamground-build, so each must belong to that
+# account rather than to whoever happened to build first.
+#
+# THE EDITOR TREE IS ON THIS LIST BECAUSE LEAVING IT OFF BROKE A DEPLOY. The first version named
+# only the top three. `npm ci` in the site checkout runs `postinstall`, which runs
+# `editor:install`, which runs `npm ci` in editor/ — and `npm ci` DELETES the tree before
+# repopulating it. With editor/node_modules still root-owned from the era when builds ran as root,
+# the newly-unprivileged build died on `rmdir editor/node_modules/.bin`, the deploy refused to flip
+# (correctly), and the play aborted before later roles ran. A partial repair is worse than none
+# here: it moves the failure later, into a build that has already started.
 content_repos_build_outputs:
   - .astro
   - node_modules
   - dist
+  - editor/node_modules
+  - editor/dist
