@@ -379,7 +379,13 @@ test('the write path: start a change, save, send for review, publish — through
     const beforeStart = status;
     await page.click('#jamground-control-startAChange');
     status = await waitForStatusChange(page, beforeStart);
-    assert.equal(status, VOCAB.changeStarted);
+    // The status line no longer says only `changeStarted`: opening a change also hands over the
+    // staging address, so this reads `<changeStarted> — <stagingPreparing>` with the URL appended
+    // as a link, and textContent concatenates the link's text. Asserting the prefix plus the
+    // address is stronger than the old equality — it checks the address is actually offered.
+    assert.ok(status.startsWith(VOCAB.changeStarted), `status should open with the change-started wording, got: ${status}`);
+    assert.ok(status.includes(VOCAB.stagingPreparing), 'the staging site should be offered when the change opens');
+    assert.match(status, /https:\/\/pr-\d+\.preview\./, 'the staging address itself must be on screen, not merely promised');
 
     // After starting a change, the startAChange control should be disabled: a change is
     // open and the control must track token && !change.

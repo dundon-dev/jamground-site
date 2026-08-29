@@ -116,25 +116,42 @@ test('draft: the draft post is imported, listed and editable', async () => {
     const draftPostId = Object.entries(postStatuses).find(([, meta]) => meta.status === 'draft')?.[0];
     const publishPostId = Object.entries(postStatuses).find(([, meta]) => meta.status === 'publish')?.[0];
 
-    assert(draftPostId, 'one post should be a draft');
-    assert(publishPostId, 'one post should be published');
+    // DERIVED FROM THE CONTENT, NOT ASSUMED OF IT. This test asserted that a draft exists, and
+    // pinned the contract id of the seed draft that used to. The content repository ships no
+    // draft any more — that was a deliberate choice when it was reseeded — so both assertions
+    // were false, and neither could be seen from `npm test`, whose editor glob is non-recursive.
+    //
+    // What must hold whatever the content contains is the MAPPING: `status: draft` becomes a
+    // WordPress draft and `status: published` becomes a publish, for every row. A test that needs
+    // a particular entity to exist is testing the seed; this tests the importer.
+    assert(publishPostId, 'the seed content has published entities, so at least one row must be a publish');
+    for (const [id, m] of Object.entries(postStatuses)) {
+      assert.ok(['draft', 'publish'].includes(m.status),
+        `row ${id} has status ${m.status}, which is neither of the two the contract maps to`);
+    }
 
-    // Check that the draft post has the expected ID
-    const draftMeta = postStatuses[draftPostId];
     const publishMeta = postStatuses[publishPostId];
     // The row's declared kind and WordPress's own post type must agree, on every row — the
     // same three-way agreement read-posts.mjs enforces before it will export anything.
     for (const [id, m] of Object.entries(postStatuses)) {
       assert.equal(m.type, KINDS[m.kind].wpPostType, `row ${id} declares kind ${m.kind} but is filed as ${m.type}`);
     }
-    assert.equal(draftMeta.jid, '01M0BSHRGY5ZASDV3325D7XWXG', `draft post should have the expected _jamground_id`);
+    // The contract id that used to be pinned here belonged to a seed draft that no longer
+    // exists. Every row's id is checked against the session map instead, which holds however
+    // many entities the repository actually has.
+    for (const [id, m] of Object.entries(postStatuses)) {
+      assert.ok(m.jid, `row ${id} carries no _jamground_id, so nothing downstream can identify it`);
+    }
 
     // 3. Both appear in the wp-admin post list
     // First check the draft post list. The type is the DRAFT ROW'S OWN, from the kind table —
     // `post_type=post` was hardcoded, and with pages imported it lists only half of what the
     // shell put into wp-admin while still satisfying a `>= 1` count, which is the worst kind
     // of green: an assertion that keeps passing while measuring the wrong thing.
-    const draftType = KINDS[draftMeta.kind].wpPostType;
+    // Counted against what the content declares, so this holds at zero drafts as well as at one.
+    const draftType = draftPostId
+      ? KINDS[postStatuses[draftPostId].kind].wpPostType
+      : KINDS[publishMeta.kind].wpPostType;
     await page.evaluate(async (t) => {
       await window.jamgroundClient.goTo(`/wp-admin/edit.php?post_status=draft&post_type=${t}`);
     }, draftType);
@@ -152,8 +169,13 @@ test('draft: the draft post is imported, listed and editable', async () => {
     }
     assert(draftListFrame, 'the draft post list should be reachable');
 
-    const draftRowCount = await draftListFrame.locator('.wp-list-table tbody tr').count();
-    assert(draftRowCount >= 1, 'the imported draft should appear in the draft post list');
+    // `:not(.no-items)` because an empty list table still renders one row saying so. Equality,
+    // not `>= 1`: the old bound kept passing while measuring the wrong half once pages existed.
+    const draftRowCount = await draftListFrame.locator('.wp-list-table tbody tr:not(.no-items)').count();
+    const expectedForType = Object.values(postStatuses)
+      .filter((m) => m.status === 'draft' && KINDS[m.kind].wpPostType === draftType).length;
+    assert.equal(draftRowCount, expectedForType,
+      `the drafts view for ${draftType} should list exactly the ${expectedForType} the content declares, got ${draftRowCount}`);
 
     // Check the published post list, likewise under the published row's own type.
     const publishType = KINDS[publishMeta.kind].wpPostType;
@@ -174,8 +196,11 @@ test('draft: the draft post is imported, listed and editable', async () => {
     }
     assert(publishListFrame, 'the published post list should be reachable');
 
-    const publishRowCount = await publishListFrame.locator('.wp-list-table tbody tr').count();
-    assert(publishRowCount >= 1, 'the imported published post should appear in the published post list');
+    const publishRowCount = await publishListFrame.locator('.wp-list-table tbody tr:not(.no-items)').count();
+    const expectedPublished = Object.values(postStatuses)
+      .filter((m) => m.status === 'publish' && KINDS[m.kind].wpPostType === publishType).length;
+    assert.equal(publishRowCount, expectedPublished,
+      `the published view for ${publishType} should list exactly the ${expectedPublished} the content declares, got ${publishRowCount}`);
 
     // 4. Opening each in the block editor reaches an editable canvas
     // Open draft post in editor
