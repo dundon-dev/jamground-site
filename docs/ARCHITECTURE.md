@@ -105,3 +105,31 @@ Rollback reuses the same mechanism rather than a separate script. Every flip rec
 same target and flipping again — see `infra/RUNBOOK.md`. Old releases are pruned by count (the
 last five, plus whatever `current` and `previous` point at), never by age, so a quiet week
 cannot prune away the one release a rollback needs.
+
+## What ships live and empty
+
+Three pieces of infrastructure are converged, verified and reachable, but nothing drives them.
+They are real systemd units and real nginx server blocks, not plans — which is exactly what
+makes them easy to mistake for working features. Each is listed here so the next person finds
+the gap by reading rather than by deploying.
+
+**Previews are routed but never built.** `roles/nginx` serves `pr-<N>.preview.<domain>` from
+`<previews_root>/<N>`, and the path-traversal guard on it is sound (the capture is digits only).
+`roles/isolation` installs `jamground-preview-build@.service` with the resource envelope a
+preview build should run inside. But its `ExecStart` is `/bin/true`, nothing instantiates the
+unit, and nothing ever writes into `<previews_root>`. Every preview URL therefore returns 404.
+The editor deliberately surfaces no preview link for this reason: a control that hands an editor
+a dead URL is worse than no control. Wiring it means giving the unit a real build command, having
+something instantiate it per change, and only then surfacing the URL.
+
+**There is no automatic deploy.** `roles/webhook` runs `infra/hooks/server.mjs`, which
+authenticates GitHub's HMAC, refuses replays and enqueues the delivery — correctly, and with its
+own tests. Nothing consumes that queue. `jamground-deploy` (`roles/deploy`) is the real build,
+verify, release-directory and symlink-flip mechanism, and it is invoked by hand. So publishing a
+change updates the content repository and does not update the site. Anyone expecting a push to
+reach the live site will find it did not, and no error will have been raised anywhere, because
+nothing failed — nothing was asked to run.
+
+**`jamground-production-build.service` is a resource envelope, not a build.** Its `ExecStart` is
+also `/bin/true`; `jamground-deploy` is invoked directly rather than through systemd, so the
+envelope constrains nothing today.
