@@ -178,6 +178,42 @@
   become_user: jamground-build
   register: content_repos_content_checkout_result
 
+# BEFORE ANY BUILD, and after the clones that may have just created the checkout.
+#
+# jamground-deploy used to run its `npm ci && npm run build` as whoever invoked it, and the task
+# below invoked it with no become_user — as root. Every artefact under the shared site checkout was
+# therefore root-owned, on a box where the account that builds is jamground-build. Production kept
+# working (root writes what root owns) and the first real PREVIEW build did not: jamground-build
+# cannot write root's .astro/, and `astro build` failed with EACCES on .astro/content.d.ts. The
+# script is fixed — it drops for the build now — but a fixed script cannot chown what an earlier
+# converge already left behind, so this repairs it once and then reports nothing forever.
+#
+# Idempotent by construction rather than by intent: `file:` with `recurse: true` compares owner and
+# group per entry and reports changed only where it actually changed one. No `mode:` — that would
+# rewrite the permissions npm wrote across node_modules/, .bin/ included, on every converge.
+#
+# Only paths that ALREADY EXIST, which is why this is stat-then-set rather than one `file:` with
+# `state: directory`. That form would CREATE an empty node_modules/ on a box that has never built,
+# and jamground-preview-build refuses to build when node_modules/ is missing precisely so it never
+# runs against a half-installed tree — an empty directory would satisfy that guard and turn a clear
+# refusal into a confusing build failure.
+- name: Find which build outputs the site checkout already carries
+  ansible.builtin.stat:
+    path: "{{ content_repos_site_checkout }}/{{ item }}"
+  loop: "{{ content_repos_build_outputs }}"
+  register: content_repos_build_output_stats
+
+- name: Give the build account the build outputs, whoever built them last
+  ansible.builtin.file:
+    path: "{{ item.stat.path }}"
+    state: directory
+    owner: jamground-build
+    group: jamground-build
+    recurse: true
+  loop: "{{ content_repos_build_output_stats.results | selectattr('stat.exists') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+
 # jamground-deploy names every release `<utc>-<contentSha7>-<siteSha7>` and records both SHAs
 # in the manifest — a fact about the RELEASE, not a one-shot latch. An earlier version of this
 # task gated the one deploy it ever performed on `current` still naming roles/deploy's
@@ -190,8 +226,19 @@
     path: "{{ content_repos_deploy_current }}/manifest.json"
   register: content_repos_current_manifest_slurp
 
+# AS ROOT, EXPLICITLY, and not as jamground-build. The two halves of a deploy need two different
+# privilege levels and jamground-deploy separates them itself: it drops to jamground-build for the
+# build (`sudo -n -H -u`, which only root can do — jamground-build holds no sudo at all and
+# jamground holds exactly two no-argument entries) and calls the two privileged wrappers directly.
+# Running this task as jamground-build instead would keep the build unprivileged and then be unable
+# to flip; running it as jamground would build as jamground and leave the same class of
+# wrongly-owned artefacts this role now repairs above. Written out rather than inherited from the
+# connection user, because "root" is a requirement of this task and not an accident of the play.
+# test/gates/deploy-unprivileged-build.test.mjs holds it.
 - name: Pull, build and flip when current does not name both checkouts' HEAD
   ansible.builtin.command: "{{ content_repos_deploy_script }}"
+  become: true
+  become_user: root
   environment:
     JAMGROUND_SITE_CHECKOUT: "{{ content_repos_site_checkout }}"
     JAMGROUND_CONTENT_CHECKOUT: "{{ content_repos_content_checkout }}"

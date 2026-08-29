@@ -24,3 +24,13 @@ content_repos_content_key: "{{ content_repos_keys_dir }}/content_ed25519"
 # converge, never a one-shot latch.
 content_repos_deploy_current: /srv/jamground/current
 content_repos_deploy_script: /usr/local/bin/jamground-deploy
+
+# The three things a build WRITES into the site checkout, none of them tracked and all three
+# gitignored, which is why the `force: true` clones above leave them alone. Named here because
+# they are shared: jamground-deploy writes them on the production path and jamground-preview-build
+# reads and rewrites them on the preview path, and BOTH run as jamground-build — so all three must
+# belong to that account rather than to whoever happened to build first.
+content_repos_build_outputs:
+  - .astro
+  - node_modules
+  - dist

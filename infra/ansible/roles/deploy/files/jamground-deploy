@@ -26,10 +26,24 @@
 # that does not exist on this box. The resolved absolute path is recorded in the release manifest
 # so a build that read the wrong tree is not indistinguishable from one that read the right one.
 #
-# The build itself is expected to run as jamground-build (unprivileged, no
-# secrets); the flip needs the two no-argument sudo wrappers only `jamground` holds. `sudo -n`
-# degrades cleanly: root can call the wrappers directly, jamground reaches them via the grant,
-# and anything else fails loudly rather than hanging on a password prompt.
+# TWO HALVES, TWO PRIVILEGE LEVELS, AND THIS SCRIPT SEPARATES THEM ITSELF. The build runs as
+# jamground-build — unprivileged, no sudo, no secrets, because it executes repository content.
+# The flip needs the two no-argument sudo wrappers only `jamground` holds, or root. Invoked as
+# root, this script DROPS to jamground-build for `npm ci && npm run build` and then calls the two
+# wrappers directly; invoked as anything else it builds as itself and reaches the wrappers through
+# `sudo -n`. One question, `id -u`, asked once and answered the same way in both places: "can I
+# drop for the build" and "do I need the grant to flip" are the same question about the same
+# account. `sudo -n` degrades cleanly either way, failing loudly rather than hanging on a prompt.
+#
+# THIS PARAGRAPH USED TO SAY THE FIRST SENTENCE AND THE CODE DID NOT DO IT. Every
+# `npm ci && npm run build` ran as whoever invoked the script, and roles/content_repos invoked it
+# with no become_user — as root. So every artefact under the SHARED site checkout came out
+# root-owned: .astro/, node_modules/, dist/. Production never noticed, because root can write what
+# root owns. jamground-preview-build, which correctly runs as jamground-build, could not: the
+# first real preview build died with EACCES on .astro/content.d.ts. A comment that describes
+# something its code does not do is only ever found by whatever the code breaks next, and here
+# that was a class of build nobody had run yet. test/gates/deploy-unprivileged-build.test.mjs now
+# holds the two together, so the sentence above cannot go back to being an aspiration.
 set -euo pipefail
 
 root=/srv/jamground
@@ -55,6 +69,23 @@ fail() {
 echo "jamground-deploy: building $release"
 mkdir -p "$release_dir"
 
+deploy_env=/etc/jamground/deploy.env
+build_user=jamground-build
+
+# Resolved by THIS script and not taken from the identity file below: this script knows where the
+# content checkout actually is and that file does not. It is recorded in the release manifest, so
+# a build that read the wrong tree is not indistinguishable from one that read the right one.
+content_dir=$(readlink -f "$JAMGROUND_CONTENT_CHECKOUT")
+
+# THE BUILD, AS ONE STEP THAT CAN RUN ON THE FAR SIDE OF A PRIVILEGE DROP.
+#
+# Everything it needs arrives as an ARGUMENT or is re-read inside it, because `sudo` runs the
+# command in a reset environment (`env_reset`, on by default) — whatever this shell exported does
+# NOT cross. Passing the values by name instead was not an option and is not a detail: this script
+# must go on naming none of the six identity values, which is the property
+# test/gates/deploy-env-names.test.mjs holds. So the identity file is sourced on the far side,
+# whole, exactly as it was sourced here before.
+#
 # The box's own copy of the deployment's identity, written by roles/deploy from the environment
 # the operator sourced their `.env` into. Nothing else on this box knows it: `.env` lives on the
 # operator's machine and Ansible copies it nowhere, so a build that does not read this one
@@ -70,19 +101,51 @@ mkdir -p "$release_dir"
 # value added to the template arrives here for nothing. The price is that the file WINS over
 # anything already exported into this shell — the box's converged identity beats an ad-hoc
 # override, which is the right way round for the production path.
-deploy_env=/etc/jamground/deploy.env
-if [ -r "$deploy_env" ]; then
+#
+# The two orderings inside are the two that were here before, unchanged: the identity file is
+# sourced FIRST so the converged identity beats anything ambient, and JAMGROUND_CONTENT_DIR is
+# exported LAST so this script has the final word on where content/ is. `set -euo pipefail` is
+# restated because `bash -c` starts a fresh shell, and a build step that lost errexit would let
+# `npm ci` fail and `npm run build` produce a stale dist/ that flips as if it were new.
+build_step='
+set -euo pipefail
+if [ -r "$1" ]; then
   set -a
-  . "$deploy_env"
+  . "$1"
   set +a
 fi
+export JAMGROUND_CONTENT_DIR="$2"
+cd "$3"
+npm ci
+npm run build
+'
 
-# After the sourcing, and not before: this script knows where the content checkout actually is
-# and the identity file does not, so the export below is the last word on it either way.
-content_dir=$(readlink -f "$JAMGROUND_CONTENT_CHECKOUT")
-export JAMGROUND_CONTENT_DIR="$content_dir"
+if [ "$(id -u)" -eq 0 ]; then
+  # `-u` needs root, and root is the only account here that has it: jamground holds exactly two
+  # no-argument sudo entries and jamground-build holds none, which is what makes `id -u` the whole
+  # test rather than a name comparison. `-n` for the reason the flip below uses it — a box that
+  # cannot authorise this must fail loudly, not wait on a prompt. `-H` sets HOME to
+  # jamground-build's own; npm writes a cache and a log directory under it, and a build that
+  # inherited root's HOME would die with an EACCES naming ~/.npm rather than the account.
+  # roles/users creates that home (`create_home: true`) precisely so this account has one — a
+  # system account is not given one by default, and `env_reset` alone would not be enough if a
+  # box ever put HOME in env_keep.
+  build_cmd=(sudo -n -H -u "$build_user" bash -c "$build_step" jamground-deploy \
+    "$deploy_env" "$content_dir" "$JAMGROUND_SITE_CHECKOUT")
+  build_as="$build_user"
+else
+  # Already unprivileged: jamground-build IS the target account, and jamground holds no `-u` grant
+  # to reach it with. Dropping again is impossible and unnecessary — the property being protected
+  # is that the build carries no privilege, and here it already does not.
+  build_cmd=(bash -c "$build_step" jamground-deploy \
+    "$deploy_env" "$content_dir" "$JAMGROUND_SITE_CHECKOUT")
+  build_as=$(id -un)
+fi
 
-if ! ( cd "$JAMGROUND_SITE_CHECKOUT" && npm ci && npm run build ); then
+# Said out loud, every deploy, because the whole of this defect was invisible: a root-run build
+# leaves artefacts nobody else can overwrite, exits 0, and serves the site correctly.
+echo "jamground-deploy: the build runs as $build_as"
+if ! "${build_cmd[@]}"; then
   fail "the build exited non-zero; current is unchanged"
 fi
 

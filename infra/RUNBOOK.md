@@ -154,16 +154,24 @@ ansible-playbook -i inventory.yml verify/deploy.yml
 ## Deploying
 
 `content_repos` performs the first build. After that, a deploy is running the script `deploy`
-shipped, against the two already-cloned repositories. This one runs **on the box**, as the build
-account, so it takes its identity from `/etc/jamground/deploy.env` — which the converge wrote
-from your `.env` — rather than from your `.env` itself, which the box never sees. The only two
-things you hand it are the two checkout directories, and they are named `_CHECKOUT` rather than
-`_REPO` on purpose: `JAMGROUND_SITE_REPO` and `JAMGROUND_CONTENT_REPO` already mean the two
-repository *names* to the build that runs inside this script, and a directory passed under those
-names would be read as a name.
+shipped, against the two already-cloned repositories. This one runs **on the box**, and it takes
+its identity from `/etc/jamground/deploy.env` — which the converge wrote from your `.env` — rather
+than from your `.env` itself, which the box never sees. The only two things you hand it are the two
+checkout directories, and they are named `_CHECKOUT` rather than `_REPO` on purpose:
+`JAMGROUND_SITE_REPO` and `JAMGROUND_CONTENT_REPO` already mean the two repository *names* to the
+build that runs inside this script, and a directory passed under those names would be read as a
+name.
+
+Run it **as root**, which is not the same as running the build as root: the script performs the two
+halves at two privilege levels itself, dropping to `jamground-build` for `npm ci && npm run build`
+and keeping only the symlink flip and the nginx reload privileged. Root is the one account here
+that can make that drop — `jamground-build` holds no sudo at all and `jamground` holds exactly two
+no-argument entries — so running the script as either of them instead builds as that account and,
+in `jamground`'s case, leaves the shared site checkout owned by an account the preview build cannot
+write.
 
 ```sh
-sudo -u jamground-build \
+sudo env \
   JAMGROUND_SITE_CHECKOUT=/srv/jamground/repos/site \
   JAMGROUND_CONTENT_CHECKOUT=/srv/jamground/repos/content \
   /usr/local/bin/jamground-deploy
