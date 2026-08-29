@@ -137,24 +137,43 @@
 # the one key cut for it — the same boundary the two-keypair design holds on the GitHub side.
 # `accept_newhostkey` is trust-on-first-use for github.com's host key; there is no earlier point
 # in this role where that trust could be established some other way.
-- name: Clone (or fast-forward) the site repository over its own read-only deploy key
+#
+# `force: true` on both, because these are MIRRORS and not working copies. Both remotes have been
+# force-pushed to a new root commit, so what is on the box shares no history with what it must
+# now hold — and nothing on this box writes into either tree: this role does not edit them, and
+# the build reads them and writes only dist/, .astro/ and node_modules/, all three untracked and
+# gitignored. The remote is authoritative by construction, so "discard whatever is here and take
+# what is there" is not a risk being accepted here; it is the only thing a reconcile can mean.
+#
+# What it actually buys, since `version: HEAD` makes the module `git reset --hard origin/<branch>`
+# either way: the fetch becomes `git fetch --tags --force`, so a tag the force-push moved is
+# updated rather than refused as a clobber (branches already update non-fast-forward through the
+# `+refs/heads/*` refspec a clone configures, tags do not); and a tracked file that somehow
+# differs is reset instead of failing the task outright with "Local modifications exist".
+#
+# The day anything on this box legitimately writes into these trees, this flag has to go with it.
+# From then on a converge would silently destroy that work, and the box would have stopped being
+# a mirror with nothing here left to say so.
+- name: Clone (or reconcile) the site repository over its own read-only deploy key
   ansible.builtin.git:
     repo: "git@github.com:{{ content_repos_org }}/{{ content_repos_site_repo }}.git"
     dest: "{{ content_repos_site_checkout }}"
     version: HEAD
     key_file: "{{ content_repos_site_key }}"
     accept_newhostkey: true
+    force: true
   become: true
   become_user: jamground-build
   register: content_repos_site_checkout_result
 
-- name: Clone (or fast-forward) the content repository over its own read-only deploy key
+- name: Clone (or reconcile) the content repository over its own read-only deploy key
   ansible.builtin.git:
     repo: "git@github.com:{{ content_repos_org }}/{{ content_repos_content_repo }}.git"
     dest: "{{ content_repos_content_checkout }}"
     version: HEAD
     key_file: "{{ content_repos_content_key }}"
     accept_newhostkey: true
+    force: true
   become: true
   become_user: jamground-build
   register: content_repos_content_checkout_result
@@ -174,8 +193,8 @@
 - name: Pull, build and flip when current does not name both checkouts' HEAD
   ansible.builtin.command: "{{ content_repos_deploy_script }}"
   environment:
-    JAMGROUND_SITE_REPO: "{{ content_repos_site_checkout }}"
-    JAMGROUND_CONTENT_REPO: "{{ content_repos_content_checkout }}"
+    JAMGROUND_SITE_CHECKOUT: "{{ content_repos_site_checkout }}"
+    JAMGROUND_CONTENT_CHECKOUT: "{{ content_repos_content_checkout }}"
   when: >-
     (content_repos_current_manifest_slurp.content | b64decode | from_json).contentSha
       != content_repos_content_checkout_result.after[:7]

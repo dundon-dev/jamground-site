@@ -30,6 +30,31 @@
     group: root
     mode: '0755'
 
+- name: Ensure /etc/jamground exists
+  ansible.builtin.file:
+    path: /etc/jamground
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# The build runs on the box, inside jamground-deploy, where the operator's `.env` does not exist
+# and never will — Ansible copies it nowhere. Without this file the build resolves all six of
+# jamground.config.mjs's values to their committed placeholders and emits `example.com` canonical
+# URLs while exiting 0, which is the shape of failure this tree refuses. The converge is the one
+# moment that knows both the operator's environment and the box.
+#
+# 0644 and root-owned because every value in it is public by construction — all six are baked
+# into the editor bundle at build time wherever they are written. No secret is ever templated
+# here; the three that exist are named by path in .env.example and stay at those paths.
+- name: Write the box's own copy of the deployment's identity, for the build to source
+  ansible.builtin.template:
+    src: deploy.env.j2
+    dest: "{{ deploy_env_file }}"
+    owner: root
+    group: root
+    mode: '0644'
+
 - name: Ship the release-switch wrapper — the one privileged half of a deploy, no arguments
   ansible.builtin.copy:
     src: jamground-release-switch

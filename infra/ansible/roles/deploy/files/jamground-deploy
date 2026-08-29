@@ -8,13 +8,20 @@
 # it to the box and runs it there, rather than owning its logic, because a deploy must be
 # runnable by the webhook with no control node in the loop.
 #
-# Requires JAMGROUND_SITE_REPO and JAMGROUND_CONTENT_REPO in the environment — paths to the two
-# already-pulled repository checkouts. Where those checkouts live, and keeping them pulled, is
-# content_repos' job; this script only builds what is already on disk and
-# flips.
+# Requires JAMGROUND_SITE_CHECKOUT and JAMGROUND_CONTENT_CHECKOUT in the environment — the two
+# already-pulled repository checkouts, by path. Where those checkouts live, and keeping them
+# pulled, is content_repos' job; this script only builds what is already on disk and flips.
+#
+# _CHECKOUT, and not _REPO, for a reason that is load-bearing rather than stylistic. The build
+# this script runs resolves jamground.config.mjs out of THIS SAME ENVIRONMENT, and that module
+# reads JAMGROUND_SITE_REPO and JAMGROUND_CONTENT_REPO as the two repository NAMES — the `repo`
+# half of `org/repo`. Handing it a directory under those names does not fail; it resolves
+# `<org>//srv/jamground/repos/content` and then waits for the first thing at build time to reach
+# for a slug. A checkout directory and a repository name are two different things, so they carry
+# two different names — test/gates/deploy-env-names.test.mjs is what holds the two sets apart.
 #
 # JAMGROUND_CONTENT_DIR is how the build itself finds content/ — it names the content
-# repository's ROOT, the same directory JAMGROUND_CONTENT_REPO already names, so this script
+# repository's ROOT, the same directory JAMGROUND_CONTENT_CHECKOUT already names, so this script
 # exports one as the other rather than leaving it unset and falling back to a sibling directory
 # that does not exist on this box. The resolved absolute path is recorded in the release manifest
 # so a build that read the wrong tree is not indistinguishable from one that read the right one.
@@ -30,11 +37,11 @@ releases="$root/releases"
 release_switch=/usr/local/sbin/jamground-release-switch
 reload_nginx=/usr/local/sbin/jamground-reload-nginx
 
-: "${JAMGROUND_SITE_REPO:?JAMGROUND_SITE_REPO must name the site repository checkout}"
-: "${JAMGROUND_CONTENT_REPO:?JAMGROUND_CONTENT_REPO must name the content repository checkout}"
+: "${JAMGROUND_SITE_CHECKOUT:?JAMGROUND_SITE_CHECKOUT must name the site repository checkout}"
+: "${JAMGROUND_CONTENT_CHECKOUT:?JAMGROUND_CONTENT_CHECKOUT must name the content repository checkout}"
 
-content_sha=$(git -C "$JAMGROUND_CONTENT_REPO" rev-parse --short=7 HEAD)
-site_sha=$(git -C "$JAMGROUND_SITE_REPO" rev-parse --short=7 HEAD)
+content_sha=$(git -C "$JAMGROUND_CONTENT_CHECKOUT" rev-parse --short=7 HEAD)
+site_sha=$(git -C "$JAMGROUND_SITE_CHECKOUT" rev-parse --short=7 HEAD)
 utc=$(date -u +%Y%m%dT%H%M%SZ)
 release="${utc}-${content_sha}-${site_sha}"
 release_dir="$releases/$release"
@@ -48,16 +55,40 @@ fail() {
 echo "jamground-deploy: building $release"
 mkdir -p "$release_dir"
 
-content_dir=$(readlink -f "$JAMGROUND_CONTENT_REPO")
+# The box's own copy of the deployment's identity, written by roles/deploy from the environment
+# the operator sourced their `.env` into. Nothing else on this box knows it: `.env` lives on the
+# operator's machine and Ansible copies it nowhere, so a build that does not read this one
+# resolves jamground.config.mjs to its committed placeholders and emits `example.com` canonical
+# URLs — exiting 0, on a box serving production.
+#
+# Sourced only IF PRESENT, deliberately. A fork that has converged nothing, or that is mid-way
+# through its first converge, has no file here, and this script must still produce a coherent
+# placeholder build: refusing to deploy over a missing identity would take a site down for the
+# one mistake the placeholders already handle gracefully.
+#
+# Sourced whole rather than read key by key, so this script names none of the six and a seventh
+# value added to the template arrives here for nothing. The price is that the file WINS over
+# anything already exported into this shell — the box's converged identity beats an ad-hoc
+# override, which is the right way round for the production path.
+deploy_env=/etc/jamground/deploy.env
+if [ -r "$deploy_env" ]; then
+  set -a
+  . "$deploy_env"
+  set +a
+fi
+
+# After the sourcing, and not before: this script knows where the content checkout actually is
+# and the identity file does not, so the export below is the last word on it either way.
+content_dir=$(readlink -f "$JAMGROUND_CONTENT_CHECKOUT")
 export JAMGROUND_CONTENT_DIR="$content_dir"
 
-if ! ( cd "$JAMGROUND_SITE_REPO" && npm ci && npm run build ); then
+if ! ( cd "$JAMGROUND_SITE_CHECKOUT" && npm ci && npm run build ); then
   fail "the build exited non-zero; current is unchanged"
 fi
 
-[ -d "$JAMGROUND_SITE_REPO/dist" ] || fail "$JAMGROUND_SITE_REPO/dist does not exist after a build that exited 0"
+[ -d "$JAMGROUND_SITE_CHECKOUT/dist" ] || fail "$JAMGROUND_SITE_CHECKOUT/dist does not exist after a build that exited 0"
 
-cp -a "$JAMGROUND_SITE_REPO/dist" "$release_dir/public"
+cp -a "$JAMGROUND_SITE_CHECKOUT/dist" "$release_dir/public"
 
 # from Settings.defaultLocale — this site never emits a bare-root
 # public/index.html, only the default locale's, the same path

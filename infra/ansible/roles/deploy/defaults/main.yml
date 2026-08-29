@@ -9,6 +9,12 @@ deploy_current: "{{ deploy_root }}/current"
 deploy_previous: "{{ deploy_root }}/previous"
 deploy_script_path: /usr/local/bin/jamground-deploy
 
+# The box's own copy of the six values jamground.config.mjs reads. jamground-deploy sources this
+# before the build, so the site is built for the operator's domain rather than for the committed
+# placeholder — and it is one of the literal paths that script also spells out by hand, for the
+# reason above.
+deploy_env_file: /etc/jamground/deploy.env
+
 # The one release this role itself seeds, so `current` is never a dangling symlink before
 # the first real build. Named in the same `<utc>-<contentSha7>-<siteSha7>` shape a real
 # release uses, with obviously-fake SHAs so it can never be mistaken for one.

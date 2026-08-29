@@ -1,9 +1,10 @@
 ---
-# Three things to prove: current is a real symlink into releases/ (never dangling — a dangling
+# Four things to prove: current is a real symlink into releases/ (never dangling — a dangling
 # root is a 500 on every request), previous exists once there have been two releases and not
-# before (this task itself seeds only one), and the deploy mechanism — the script plus its two
+# before (this task itself seeds only one), the deploy mechanism — the script plus its two
 # privileged wrappers — is present and executable, since a deploy is only as real as what it
-# flips through.
+# flips through, and the box knows its own identity, since a build that does not is a build for
+# `example.com`.
 #
 # The domain-agnostic paths are repeated here rather than sourced from roles/deploy/defaults,
 # the same way verify/nginx.yml repeats nginx_domain: a verify playbook must not depend on a
@@ -14,6 +15,17 @@
   vars:
     deploy_root: /srv/jamground
     deploy_releases_dir: /srv/jamground/releases
+    deploy_env_file: /etc/jamground/deploy.env
+    # The six keys the build reads, repeated here for the same reason the paths above are: a
+    # verify playbook asserts against literals it owns, so that a converge-time variable being
+    # wrong cannot make the assertion agree with it.
+    deploy_env_keys:
+      - JAMGROUND_DOMAIN
+      - JAMGROUND_GITHUB_ORG
+      - JAMGROUND_SITE_REPO
+      - JAMGROUND_CONTENT_REPO
+      - JAMGROUND_CONTENT_BRANCH
+      - JAMGROUND_OAUTH_CLIENT_ID
   tasks:
     - name: Stat current
       ansible.builtin.stat:
@@ -112,3 +124,57 @@
         fail_msg: >-
           /usr/local/bin/jamground-deploy does not set JAMGROUND_CONTENT_DIR; the build has no
           way to locate content/ (OD-29)
+
+    # The other half of the same argument. The build finds content/ through
+    # JAMGROUND_CONTENT_DIR; it finds out WHOSE SITE IT IS through this file, and nothing else on
+    # the box knows — `.env` is on the operator's machine and Ansible copies it nowhere. A box
+    # without it builds `example.com` canonical URLs and exits 0. Asserted as state, read back
+    # off the box, exactly like the assertion above.
+    - name: Stat the identity file the build sources
+      ansible.builtin.stat:
+        path: "{{ deploy_env_file }}"
+      register: deploy_env_stat
+
+    - name: Assert the identity file exists, root-owned and world-readable
+      ansible.builtin.assert:
+        that:
+          - deploy_env_stat.stat.exists
+          - deploy_env_stat.stat.pw_name == 'root'
+          - deploy_env_stat.stat.mode == '0644'
+        fail_msg: >-
+          {{ deploy_env_file }} does not exist, or is not root-owned mode 0644. 0644 is
+          deliberate: every value in it is public by construction and the unprivileged build
+          account must be able to read it. A stricter mode here means someone has put something
+          in it that does not belong — no secret is ever written to this file.
+
+    - name: Read the identity file back off the box
+      ansible.builtin.slurp:
+        path: "{{ deploy_env_file }}"
+      register: deploy_env_slurp
+
+    - name: Assert it declares every value the build reads
+      ansible.builtin.assert:
+        that:
+          - (key ~ '=') in (deploy_env_slurp.content | b64decode)
+        fail_msg: >-
+          {{ deploy_env_file }} does not declare {{ key }}, so a build on this box resolves it to
+          the placeholder committed in jamground.config.mjs and says so in every canonical URL it
+          emits — while exiting 0
+      loop: "{{ deploy_env_keys }}"
+      loop_control:
+        loop_var: key
+
+    - name: Assert it declares nothing beyond those six — this file is public, not a secret store
+      ansible.builtin.assert:
+        that:
+          - deploy_env_declared == deploy_env_keys
+        fail_msg: >-
+          {{ deploy_env_file }} declares {{ deploy_env_declared | join(', ') }}, which is not the
+          six {{ deploy_env_keys | join(', ') }}. The file is mode 0644 because those six are
+          public by construction; anything else in it is being published to every account on this
+          box. Secrets are named by path in .env.example and stay at those paths.
+      vars:
+        deploy_env_declared: >-
+          {{ (deploy_env_slurp.content | b64decode).splitlines()
+             | select('match', '^[A-Za-z_][A-Za-z0-9_]*=') | map('regex_replace', '=.*$', '')
+             | list }}

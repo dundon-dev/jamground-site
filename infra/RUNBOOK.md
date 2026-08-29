@@ -49,6 +49,16 @@ Everything else (site URL, editor origin, redirect URI, `org/repo` slugs) is der
 six by rule, on both sides. An **empty** value counts as unset on both sides too, so a
 half-filled `.env` gets the placeholder rather than a blank.
 
+Your `.env` never leaves this machine, and a deploy does not run here — it runs on the box, from
+the checkouts the box pulled. So the converge writes the six down there too, as
+`/etc/jamground/deploy.env` (`roles/deploy`), and `jamground-deploy` sources that before it
+builds. Same six values, same `KEY=value` shape, same one-line idiom reading it; root-owned and
+mode `0644`, because all six are public by construction — they are baked into the editor bundle
+at build time wherever they are written. **No secret is ever written there**; the three that
+exist are the ones in §Secrets, and they stay at those paths. A box that has never converged
+`deploy` has no such file, and `jamground-deploy` builds the placeholders rather than refusing to
+run — which is the one thing you would notice as `example.com` in the canonical URLs.
+
 Three more values belong to *your machine*, never to the deployment, and are never committed.
 `infra/ansible/inventory.yml` reads them the same way:
 
@@ -128,7 +138,7 @@ checks connectivity:
 | `broker.yml` | the auth broker service is running and answering on localhost |
 | `editor-shell.yml` | the editor bundle is deployed and its vhost is live |
 | `webhook.yml` | the receiver is running and its HMAC secret is in place |
-| `deploy.yml` | `current` is a real symlink into `releases/`, and the deploy mechanism is present and executable |
+| `deploy.yml` | `current` is a real symlink into `releases/`, the deploy mechanism is present and executable, and `/etc/jamground/deploy.env` carries the six identity values and nothing else |
 | `content-repos.yml` | both repositories are cloned, each over its own read-only deploy key |
 | `isolation.yml` | the build resource slices exist |
 | `selfcheck.yml` | the periodic self-check timer is installed and enabled |
@@ -144,13 +154,17 @@ ansible-playbook -i inventory.yml verify/deploy.yml
 
 `content_repos` performs the first build. After that, a deploy is running the script `deploy`
 shipped, against the two already-cloned repositories. This one runs **on the box**, as the build
-account, so it takes its configuration from what the converge already put there rather than from
-your `.env`:
+account, so it takes its identity from `/etc/jamground/deploy.env` — which the converge wrote
+from your `.env` — rather than from your `.env` itself, which the box never sees. The only two
+things you hand it are the two checkout directories, and they are named `_CHECKOUT` rather than
+`_REPO` on purpose: `JAMGROUND_SITE_REPO` and `JAMGROUND_CONTENT_REPO` already mean the two
+repository *names* to the build that runs inside this script, and a directory passed under those
+names would be read as a name.
 
 ```sh
 sudo -u jamground-build \
-  JAMGROUND_SITE_REPO=/srv/jamground/repos/site \
-  JAMGROUND_CONTENT_REPO=/srv/jamground/repos/content \
+  JAMGROUND_SITE_CHECKOUT=/srv/jamground/repos/site \
+  JAMGROUND_CONTENT_CHECKOUT=/srv/jamground/repos/content \
   /usr/local/bin/jamground-deploy
 ```
 
