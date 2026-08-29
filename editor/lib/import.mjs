@@ -14,6 +14,7 @@ import { listPosts } from './content-source.mjs';
 import { parsePost } from './entity.mjs';
 import { blocksToMarkup } from './blocks-to-wp.mjs';
 import { mdastToBlocks } from '../../src/lib/mdast-to-blocks.ts';
+import { exportPost } from './export.mjs';
 
 // A static importer: every value that came from content/ travels through the JSON data
 // file written alongside it, never interpolated into this PHP source. A title or body
@@ -67,13 +68,70 @@ export async function importPosts({ client, api, fetchImpl, locale }) {
   const decoder = new TextDecoder('utf-8');
   const parsed = fetched.map(({ path, bytes }) => ({ path, ...parsePost(path, decoder.decode(bytes)) }));
 
-  const entries = parsed.map(({ path, frontmatter, body, source }) => ({
+  // ---------------------------------------------------------------------------------------------
+  // ADMITTED ONLY IF IT SURVIVES THE ROUND TRIP, BYTE FOR BYTE.
+  //
+  // Three ways an entity can be damaged by passing through this editor, and only one of them is
+  // loud on its own:
+  //
+  //   A. the import mapper cannot build the block   — blocksToMarkup throws, below
+  //   B. the export mapper cannot map it back       — throws at save; the editor sees saveFailed
+  //   C. it maps BOTH ways, but not identically     — nothing anywhere notices
+  //
+  // C is the one that writes damage into the content repository. A lossy-but-successful round trip
+  // produces bytes that differ from `_jamground_source` with NO EDIT AT ALL; changed-files.mjs
+  // sees a difference, `save` commits it, and the loss lands inside a change the editor believes
+  // is the person's own. They never touched that block. No allowlist of supported types can catch
+  // it, because every type on the list would still be on the list.
+  //
+  // So the admission test is the property itself rather than a proxy for it: export what was just
+  // imported and require the original bytes back. That is exactly the assertion
+  // test/roundtrip.test.mjs already makes against two fixtures — run here against real content,
+  // which is the only place it can see a block a fixture does not contain.
+  //
+  // Both mutable inputs are pinned to the entity's own values so neither can move: `previousSlug`
+  // to its current slug (so slugHistory cannot grow) and `updatedAt` to its stored value (so the
+  // clock cannot tick). entry.mjs's save path already holds the clock steady this same way, for
+  // this same reason.
+  //
+  // REFUSAL IS PER ENTITY, AND IS ENFORCED BY ABSENCE. A refused entity simply never reaches
+  // wp_insert_post, so it has no _jamground_id, so read-posts.mjs's meta_query cannot see it, so
+  // save cannot write it. There is no flag to check and therefore none to forget. Wholesale
+  // refusal — the rule for a schema-invalid entity, above — would be wrong here: one unsupported
+  // block on one page would blank the whole editor, including the posts that are fine.
+  // ---------------------------------------------------------------------------------------------
+  const admitted = [];
+  const refused = [];
+
+  for (const entity of parsed) {
+    const { path, frontmatter, body, source } = entity;
+    let content;
+    try {
+      content = blocksToMarkup(api, mdastToBlocks(body));
+      const verified = exportPost({
+        api,
+        markup: content,
+        frontmatter,
+        previousSlug: frontmatter.slug,
+        updatedAt: frontmatter.updatedAt,
+      });
+      if (verified !== source) {
+        throw new Error('it does not survive being read and written back unchanged');
+      }
+    } catch (err) {
+      refused.push({ path, title: frontmatter.title, reason: err.message });
+      continue;
+    }
+    admitted.push({ ...entity, content });
+  }
+
+  const entries = admitted.map(({ path, frontmatter, content, source }) => ({
     contractId: frontmatter.id,
     title: frontmatter.title,
     slug: frontmatter.slug,
     status: frontmatter.status,
     publishedAt: frontmatter.publishedAt,
-    content: blocksToMarkup(api, mdastToBlocks(body)),
+    content,
     source,
     path,
   }));
@@ -82,5 +140,8 @@ export async function importPosts({ client, api, fetchImpl, locale }) {
   await client.writeFile(root + '/jp-import-data.json', JSON.stringify(entries));
   await client.writeFile(root + '/jp-import.php', IMPORT_PHP);
   const result = await client.run({ code: `<?php require '${root}/jp-import.php';` });
-  return JSON.parse(result.text);
+  // `map` keeps its old shape — contract id -> WP post ID — so every existing caller and test is
+  // unaffected. `refused` is what the shell needs in order to say something true on screen instead
+  // of booting an empty editor and logging to a console nobody has open.
+  return { map: JSON.parse(result.text), refused };
 }

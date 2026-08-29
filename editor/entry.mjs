@@ -154,6 +154,28 @@ function handleOAuthCallback() {
   window.close();
 }
 
+// Module scope, not inside the shell closure, because BOTH halves of this file report through it:
+// the shell's controls, and boot()'s own import step — which has to be able to say that content
+// was held back. It lived in the closure until boot() needed it, and the move is the whole change;
+// nothing in it ever used the closure.
+// `link` is optional and is rendered as a real anchor. Built with createElement and textContent
+// rather than by assigning innerHTML: the only thing that ever reaches this line is our own
+// vocabulary plus a URL derived from the fork's own configuration, and it should stay that way
+// by construction rather than by everyone remembering.
+function showStatus(message, link) {
+  const el = document.getElementById('jamground-status');
+  if (!el) return;
+  el.textContent = message || '';
+  if (!link) return;
+  el.appendChild(document.createElement('br'));
+  const a = document.createElement('a');
+  a.href = link;
+  a.textContent = link;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  el.appendChild(a);
+}
+
 async function boot() {
   try {
     const iframe = document.getElementById('wp');
@@ -194,14 +216,34 @@ async function boot() {
     console.log('[entry.mjs] Importing content');
     // registerCoreBlocks() has already been called at module load time to expose
     // window.wpBlocksAPI. The API is ready for use here.
-    const api = { createBlock, serialize };
+    // blockApi, not the two-function `api`: the import now verifies each entity's round trip
+    // before admitting it, and that verification runs the export path, which needs `parse` and
+    // `getBlockType` for the attribute guard.
     try {
-      window.jamgroundImportResult = await importPosts({
-        client, api, fetchImpl: window.fetch.bind(window), locale: 'en-US',
+      const imported = await importPosts({
+        client, api: blockApi, fetchImpl: window.fetch.bind(window), locale: 'en-US',
       });
+      window.jamgroundImportResult = imported.map;
+      window.jamgroundRefused = imported.refused;
+
+      // Held-back content is reported ON SCREEN, not only to the console. This condition used to
+      // be silent: the throw was caught here, logged, and boot continued to jamgroundReady, so an
+      // ordinary post containing a code fence produced a fully-working, completely empty wp-admin
+      // with nothing anywhere saying why.
+      if (imported.refused.length > 0) {
+        const titles = imported.refused.map((r) => r.title).join(', ');
+        showStatus(`${VOCAB.contentHeldBack} ${titles}`);
+        for (const r of imported.refused) {
+          console.warn(`[entry.mjs] held back ${r.path}: ${r.reason}`);
+        }
+      }
     } catch (importError) {
+      // Still reachable, and it means something different now: the content repository itself is
+      // unreadable — a schema-invalid entity, or the tree could not be fetched. That IS wholesale,
+      // and there is nothing to edit, so it must not read as a working editor.
       console.error('[entry.mjs] Import failed:', importError);
       window.jamgroundImportError = importError.message;
+      showStatus(VOCAB.contentUnreadable);
     }
 
     console.log('[entry.mjs] Playground is ready');
@@ -250,23 +292,6 @@ window.jamgroundShell = (() => {
     if (el) el.disabled = !enabled;
   }
 
-  // `link` is optional and is rendered as a real anchor. Built with createElement and textContent
-  // rather than by assigning innerHTML: the only thing that ever reaches this line is our own
-  // vocabulary plus a URL derived from the fork's own configuration, and it should stay that way
-  // by construction rather than by everyone remembering.
-  function showStatus(message, link) {
-    const el = document.getElementById('jamground-status');
-    if (!el) return;
-    el.textContent = message || '';
-    if (!link) return;
-    el.appendChild(document.createElement('br'));
-    const a = document.createElement('a');
-    a.href = link;
-    a.textContent = link;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    el.appendChild(a);
-  }
 
   function onPopupMessage(event) {
     if (!pending) return;

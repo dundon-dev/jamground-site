@@ -28,6 +28,15 @@ export const VOCAB = {
 
   // Action feedback. None of these is a git term — the constraint is
   // test/gates/editorial-vocabulary.test.mjs, which scans this module's string literals.
+  // Said when something in the content could not be opened for editing here. Deliberately says
+  // what is TRUE of the person's work — it is untouched and safe — rather than describing the
+  // editor's internals. Before this existed the same condition produced an empty editor and a
+  // console message, which is indistinguishable from the tool being broken.
+  // The other refusal, and a different fact: nothing could be opened at all, because the content
+  // itself could not be read. Distinct from contentHeldBack so the two are never confused — one
+  // means "this editor is unfinished", the other means "the content is broken".
+  contentUnreadable: 'the content could not be opened. Nothing has been changed — please report this.',
+  contentHeldBack: 'some content cannot be edited here yet. It is not shown, and nothing you save will change it:',
   changeStarted: 'a change is now open',
   // Said when the change opens, because that is the earliest moment the address is known — the
   // site itself takes about a minute to appear, and a link offered with no warning of that reads
