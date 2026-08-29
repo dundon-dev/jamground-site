@@ -55,7 +55,7 @@
 set -euo pipefail
 
 previews_root=/srv/previews
-work_root="$previews_root/.work"
+work_root=/var/lib/jamground/preview-work
 build_lock="$previews_root/.build.lock"
 content_key=/etc/jamground/deploy-keys/content_ed25519
 deploy_env=/etc/jamground/deploy.env
@@ -175,26 +175,45 @@ fi
 # nginx's worker runs as www-data (roles/nginx) and only ever reads what is here.
 chmod -R u=rwX,go=rX "$work/dist"
 
-# PUBLISH. `<previews_root>/<N>` is a plain directory, not a symlink into a releases tree, so the
-# consumer's teardown — one `rm -rf` of that path — reclaims everything the preview ever occupied
-# on a fixed-size filesystem. The cost is that the swap is two renames rather than one, so the URL
-# can 404 for the microsecond between them; a symlink would make it atomic and leave orphaned
-# release directories that nothing on the teardown path can reach, which on a 10 GB image is the
-# worse trade. Both renames are within $previews_root, so both are rename(2).
+# PUBLISH, ACROSS A DEVICE BOUNDARY. $previews_root is a separate filesystem — roles/isolation
+# mounts a fixed-size loopback image there so previews can never fill the disk — and $work_root is
+# NOT on it, deliberately (see the header). So the output has to be COPIED in, and only then
+# swapped into place with renames that stay on one device.
+#
+# This is the shape the first working version of this script did not have. It built straight into
+# $previews_root with `--outDir` and failed every time, in Astro rather than here:
+#
+#   EXDEV: cross-device link not permitted, rename
+#     '<site checkout>/.astro/.prerender/_astro/BaseLayout.*.css' -> '<previews>/…/_astro/…'
+#
+# Astro's own ssrMoveAssets step RENAMES assets out of `.astro/.prerender/` in the site checkout
+# into the out directory, and rename(2) cannot cross a mount point. The out directory must
+# therefore sit on the same filesystem as the site checkout, which is what $work_root now is.
+#
+# `<previews_root>/<N>` stays a plain directory rather than a symlink into a releases tree, so the
+# consumer's teardown — one `rm -rf` of that path — still reclaims everything the preview occupied.
+staging="$previews_root/.staging-$pr"
 live="$previews_root/$pr"
-superseded="$work_root/.superseded-$pr"
-rm -rf -- "$superseded"
+superseded="$previews_root/.superseded-$pr"
+
+rm -rf -- "$staging" "$superseded"
+cp -a -- "$work/dist" "$staging" || fail "could not copy $work/dist to $staging"
+
+# Both renames below are within $previews_root, so both are rename(2) and neither can EXDEV. The
+# URL can 404 for the microsecond between them; a symlink would close that and leave orphaned
+# directories nothing on the teardown path can reach, which on a fixed-size image is the worse
+# trade.
 if [ -e "$live" ]; then
   mv -T -- "$live" "$superseded"
 fi
-if ! mv -T -- "$work/dist" "$live"; then
+if ! mv -T -- "$staging" "$live"; then
   # A failed publish must leave the previous preview serving, exactly as a failed build does.
   # Spelled as a full `if` rather than `[ … ] && mv …`: under `set -e` a false test there is a
   # non-zero last command in this block, which would exit before fail() ever ran.
   if [ -e "$superseded" ]; then
     mv -T -- "$superseded" "$live" || true
   fi
-  fail "could not publish $work/dist to $live"
+  fail "could not publish $staging to $live"
 fi
 rm -rf -- "$superseded"
 

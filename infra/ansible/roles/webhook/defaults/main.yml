@@ -47,6 +47,10 @@ webhook_consumer_timer_name: jamground-hooks-consume.timer
 # automatic path is exactly the one nobody is watching when it runs.
 webhook_preview_slice: jamground-preview.slice
 webhook_previews_root: /srv/previews
+# The preview build's work directory (roles/isolation owns it; repeated here as a literal for the
+# same reason webhook_previews_root is). The consumer spawns the build, so the build's writes are
+# this unit's writes, and ProtectSystem=strict would otherwise deny them.
+webhook_preview_work_root: /var/lib/jamground/preview-work
 webhook_preview_build_script: /usr/local/bin/jamground-preview-build
 webhook_site_checkout: /srv/jamground/repos/site
 webhook_content_checkout: /srv/jamground/repos/content
