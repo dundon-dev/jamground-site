@@ -18,8 +18,26 @@ import { CONTENT_TREE_URL } from '../../config.mjs';
  *  Breadth is deliberately every locale, as the per-file copies of this were: import runs for
  *  one locale, and a fork holding a second one should fail this loudly rather than quietly
  *  counting a subset. */
+/* THE HARNESS MAY AUTHENTICATE; THE PRODUCT MAY NOT.
+ *
+ * `api.github.com` allows 60 unauthenticated requests per hour per IP. A full pass of this
+ * suite spends roughly half of that — one tree fetch here per file, plus one from inside each
+ * browser boot — so two runs exhaust it, and the third fails in about a second with rejections
+ * that look nothing like a test failure. That is not hypothetical: it happened twice while
+ * verifying this stage, and the second time it was misread as a regression.
+ *
+ * A token here costs nothing and is not a contradiction. editor/lib/content-source.mjs sends
+ * no Authorization header ever — that is a product property, asserted by
+ * editor/test/content-source.test.mjs, and it stays exactly as it is. This is the test harness
+ * asking the repository what it contains, which is a different actor with a different budget.
+ * Absent a token it simply carries on unauthenticated, so nothing here requires one. */
+function harnessAuthHeaders() {
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  return token ? { Authorization: `Bearer ${token}`, 'User-Agent': 'jamground-tests' } : {};
+}
+
 export async function listSeedEntities() {
-  const res = await fetch(CONTENT_TREE_URL);
+  const res = await fetch(CONTENT_TREE_URL, { headers: harnessAuthHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch the content tree: ${res.status} ${CONTENT_TREE_URL}`);
   const data = await res.json();
   const paths = (data.tree || []).filter((e) => typeof e.path === 'string').map((e) => e.path);

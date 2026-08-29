@@ -14,6 +14,7 @@
     "postinstall": "npm run editor:install",
     "test": "npm run check:config && npm run test:config && npm run test:conformance && npm run test:gates && npm run test:contract && npm run test:hooks && npm run test:broker && npm run test:editor",
     "test:infra": "npm run check:playbooks && npm run test:playbooks",
+    "test:browser": "npm --prefix editor run test:browser",
     "check:config": "node tools/check-config.mjs",
     "test:config": "node --test 'test/tools/check-config.test.mjs'",
     "check:playbooks": "node tools/check-playbooks.mjs",

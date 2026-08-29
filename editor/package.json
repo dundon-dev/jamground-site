@@ -15,6 +15,7 @@
   },
   "scripts": {
     "test": "node --test 'test/*.test.mjs'",
+    "test:browser": "node --test --test-timeout=180000 --test-concurrency=2 'test/playwright/*.test.mjs'",
     "observe:draft": "node --test test/playwright/draft.test.mjs",
     "observe:inserter": "node --test test/playwright/mu-plugin.test.mjs"
   }

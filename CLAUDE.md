@@ -19,6 +19,22 @@ conformance tests, and the editor's own test suite. `npm run test:infra` is sepa
 `ansible-playbook` on `PATH` — kept apart so `npm test` passes on a machine with no Ansible
 installed. Run both before committing anything under `src/`, `editor/`, or `infra/`.
 
+`npm run test:browser` is the third chain and the easiest one to forget, because `npm test`'s
+editor glob is deliberately non-recursive and never reaches it. It boots WordPress Playground in
+a real browser against the live content repository, so it needs network, takes minutes, and
+spends `api.github.com` budget. Run it as:
+
+```sh
+set -a; . ./.env; set +a          # or it resolves the committed placeholders and 404s
+export GITHUB_TOKEN=$(gh auth token)   # 60 requests/hour becomes 5000
+npm run test:browser
+```
+
+Without the token the unauthenticated limit runs out after two passes and the third fails in
+about a second, in ways that look nothing like a test failure and much like broken code. **Anything touching
+`editor/entry.mjs`, `editor/lib/`, the mu-plugin, or a WordPress post type is only covered
+here.** Two regressions shipped green because it was not run.
+
 ## Conventions
 
 - `src/contract/` is normative. Don't hand-edit a schema's derived shape or duplicate a check
