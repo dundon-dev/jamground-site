@@ -203,30 +203,37 @@ test('draft: the draft post is imported, listed and editable', async () => {
       `the published view for ${publishType} should list exactly the ${expectedPublished} the content declares, got ${publishRowCount}`);
 
     // 4. Opening each in the block editor reaches an editable canvas
-    // Open draft post in editor
-    await page.evaluate(async (id) => {
-      await window.jamgroundClient.goTo('/wp-admin/post.php?post=' + id + '&action=edit');
-    }, draftPostId);
+    //
+    // The draft half runs only when the content HAS a draft. It used to be unconditional, and
+    // was safe only because the seed content shipped one; when the repository was reseeded
+    // without a draft this navigated to `post.php?post=undefined`, then waited ninety seconds
+    // for an editor that could never load. Guarding the navigation is the other half of
+    // removing the assertion that a draft exists — the half I missed first time.
+    if (draftPostId) {
+      await page.evaluate(async (id) => {
+        await window.jamgroundClient.goTo('/wp-admin/post.php?post=' + id + '&action=edit');
+      }, draftPostId);
 
-    let draftEditorFrame = null;
-    let draftCanvasFrame = null;
-    const draftEditorDeadline = Date.now() + 90000;
-    while (Date.now() < draftEditorDeadline) {
-      for (const f of page.frames()) {
-        try {
-          if (!draftEditorFrame && await f.locator('#editor, .interface-interface-skeleton, .editor-header').count()) {
-            draftEditorFrame = f;
-          }
-          if (!draftCanvasFrame && await f.locator('.block-editor-writing-flow, .block-editor-block-list__layout').count()) {
-            draftCanvasFrame = f;
-          }
-        } catch {}
+      let draftEditorFrame = null;
+      let draftCanvasFrame = null;
+      const draftEditorDeadline = Date.now() + 90000;
+      while (Date.now() < draftEditorDeadline) {
+        for (const f of page.frames()) {
+          try {
+            if (!draftEditorFrame && await f.locator('#editor, .interface-interface-skeleton, .editor-header').count()) {
+              draftEditorFrame = f;
+            }
+            if (!draftCanvasFrame && await f.locator('.block-editor-writing-flow, .block-editor-block-list__layout').count()) {
+              draftCanvasFrame = f;
+            }
+          } catch {}
+        }
+        if (draftEditorFrame && draftCanvasFrame) break;
+        await page.waitForTimeout(250);
       }
-      if (draftEditorFrame && draftCanvasFrame) break;
-      await page.waitForTimeout(250);
+      assert(draftEditorFrame, 'the draft post editor frame should be reachable');
+      assert(draftCanvasFrame, 'the draft post editor canvas should be reachable');
     }
-    assert(draftEditorFrame, 'the draft post editor frame should be reachable');
-    assert(draftCanvasFrame, 'the draft post editor canvas should be reachable');
 
     // Open published post in editor
     await page.evaluate(async (id) => {
