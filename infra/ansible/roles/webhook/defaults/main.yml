@@ -36,6 +36,16 @@ webhook_consumer_timer_name: jamground-hooks-consume.timer
 # that ordering: it refuses to process a single job until the previews root exists and the build
 # script is executable, so the ticks between this role converging and roles/isolation converging
 # are retries rather than a queue full of jobs quarantined for the box's own half-built state.
+# The slice the consumer — and therefore every preview build it spawns — runs inside.
+# roles/isolation owns this slice and its caps; repeated here as a literal for the same reason
+# webhook_previews_root is (a role's defaults are not loaded until that role runs), and gated by
+# test/gates/preview-slice.test.mjs rather than promised.
+#
+# WHY IT MATTERS. Without it the consumer is a child of nothing in particular, and the Astro build
+# it invokes inherits that: no MemoryMax, on the box that is also serving production. The slice's
+# whole purpose is that a preview build cannot starve the site, and a build reached through the
+# automatic path is exactly the one nobody is watching when it runs.
+webhook_preview_slice: jamground-preview.slice
 webhook_previews_root: /srv/previews
 webhook_preview_build_script: /usr/local/bin/jamground-preview-build
 webhook_site_checkout: /srv/jamground/repos/site

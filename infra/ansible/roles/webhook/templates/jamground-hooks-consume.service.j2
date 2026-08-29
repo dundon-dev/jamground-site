@@ -27,6 +27,12 @@ After=network.target
 
 [Service]
 Type=oneshot
+# Every preview build this pass invokes is a child of this unit, so the slice is how the build
+# inherits roles/isolation's aggregate memory cap. The per-build unit's own envelope does not
+# apply on the automatic path — the consumer holds no sudo and so cannot `systemctl start` an
+# instance — which would otherwise leave the automatic path, the one nobody watches, as the only
+# unbounded way to build.
+Slice={{ webhook_preview_slice }}
 User=jamground-build
 Group=jamground-build
 Environment=HOME={{ webhook_home_dir }}
