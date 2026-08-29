@@ -62,3 +62,23 @@ test('the sandbox does not need a writable path the build no longer uses', () =>
     'the separate work root is gone; a leftover ReadWritePath for it would add a bind mount that '
     + 'is exactly what this invariant exists to avoid.');
 });
+
+/* The address the editor hands an editor must be the address nginx actually serves.
+ *
+ * These are two independent derivations of one string — `previewUrlFor` in jamground.config.mjs,
+ * and the server_name regex in roles/nginx — and nothing else compares them. If they drift, the
+ * editor shows a confident link to a host that resolves and 404s, which reads as "the preview
+ * feature is broken" rather than as a configuration error, and no gate on the box would fire.
+ */
+test('the preview URL the editor shows matches the host nginx serves', async () => {
+  const { previewUrlFor } = await import('../../jamground.config.mjs');
+  const url = new URL(previewUrlFor(42));
+  const conf = read('infra/ansible/roles/nginx/templates/nginx.conf.j2');
+
+  assert.equal(url.protocol, 'https:', 'the certificate covers the preview names; the link must use them');
+  assert.match(url.hostname, /^pr-42\.preview\./,
+    `previewUrlFor(42) produced host ${url.hostname}; nginx matches ^pr-<digits>.preview.<domain>$`);
+  assert.match(conf, /server_name\s+~\^pr-\(\?<prnum>\[0-9\]\+\)\\\.preview\\\./,
+    'the nginx preview server_name no longer has the shape previewUrlFor builds against');
+  assert.equal(url.pathname, '/', 'the preview root is what is served; a deeper path may not exist');
+});

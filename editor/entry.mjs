@@ -12,7 +12,7 @@ import {
   getToken, clearToken, exchangeCodeForToken, beginAuthorization, stateMatches,
 } from './lib/auth.mjs';
 import { VOCAB } from './lib/vocabulary.mjs';
-import { CONTENT_REPO, CONTENT_BRANCH } from './config.mjs';
+import { CONTENT_REPO, CONTENT_BRANCH, PREVIEW_URL_FOR } from './config.mjs';
 
 // The broker's own vhost proxies this path to it (infra/ansible/roles/editor_shell's
 // edit.conf.j2, `location = /token`) so this is same-origin wherever the shell is
@@ -250,9 +250,22 @@ window.jamgroundShell = (() => {
     if (el) el.disabled = !enabled;
   }
 
-  function showStatus(message) {
+  // `link` is optional and is rendered as a real anchor. Built with createElement and textContent
+  // rather than by assigning innerHTML: the only thing that ever reaches this line is our own
+  // vocabulary plus a URL derived from the fork's own configuration, and it should stay that way
+  // by construction rather than by everyone remembering.
+  function showStatus(message, link) {
     const el = document.getElementById('jamground-status');
-    if (el) el.textContent = message || '';
+    if (!el) return;
+    el.textContent = message || '';
+    if (!link) return;
+    el.appendChild(document.createElement('br'));
+    const a = document.createElement('a');
+    a.href = link;
+    a.textContent = link;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    el.appendChild(a);
   }
 
   function onPopupMessage(event) {
@@ -367,7 +380,11 @@ window.jamgroundShell = (() => {
         });
         change = { branch, baseBranch: BASE_BRANCH, prNumber: pr.number, prNodeId: pr.node_id };
         window.jamgroundLastAction = { type: 'startAChange', branch, prNumber: pr.number };
-        showStatus(VOCAB.changeStarted);
+        // The earliest moment the staging address is known. The site behind it does not exist
+        // yet — the box builds it from the webhook this action just caused, which takes about a
+        // minute — so the message says so rather than handing over a link that 404s and letting
+        // the editor conclude the feature is broken.
+        showStatus(`${VOCAB.changeStarted} — ${VOCAB.stagingPreparing}`, PREVIEW_URL_FOR(pr.number));
         setStartAChangeEnabled(false);
         return { success: true, branch, prNumber: pr.number };
       } catch (error) {

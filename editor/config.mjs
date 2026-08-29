@@ -22,6 +22,7 @@ import {
   editorOrigin,
   editorRedirectUri,
   oauthClientId,
+  previewUrlFor,
 } from '../jamground.config.mjs';
 
 /** The public OAuth App Client ID the shell sends to GitHub's authorize screen. */
@@ -46,3 +47,6 @@ export const CONTENT_TREE_URL =
 /** The public, unauthenticated blob root; a file's URL is `${CONTENT_BLOB_BASE}/${path}`. */
 export const CONTENT_BLOB_BASE =
   `https://raw.githubusercontent.com/${CONTENT_REPO}/${CONTENT_BRANCH}`;
+
+/** The staging site for one open change. Derived, like everything else here. */
+export const PREVIEW_URL_FOR = previewUrlFor;

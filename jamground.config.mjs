@@ -151,6 +151,14 @@ export const editorOrigin = `https://edit.${domain}`;
 /** The registered OAuth callback: the shell's own origin, path `/`. */
 export const editorRedirectUri = `${editorOrigin}/`;
 
+/** The staging site for one open change, by its number.
+ *
+ *  The shape is not free: roles/nginx matches `~^pr-(?<prnum>[0-9]+)\.preview\.<domain>$` and
+ *  serves `<previews_root>/$prnum`, and the live certificate's SANs cover `*.preview.<domain>`
+ *  as a second wildcard — a plain `*.<domain>` would NOT match a name two labels deep. Derived
+ *  here so the editor and the server cannot disagree about it. */
+export const previewUrlFor = (number) => `https://pr-${number}.preview.${domain}/`;
+
 /** `org/repo` for the content repository, as GitHub's REST paths spell it. */
 export const contentRepoSlug = `${githubOrg}/${contentRepo}`;
 

@@ -29,6 +29,10 @@ export const VOCAB = {
   // Action feedback. None of these is a git term — the constraint is
   // test/gates/editorial-vocabulary.test.mjs, which scans this module's string literals.
   changeStarted: 'a change is now open',
+  // Said when the change opens, because that is the earliest moment the address is known — the
+  // site itself takes about a minute to appear, and a link offered with no warning of that reads
+  // as broken for the whole of its first minute.
+  stagingPreparing: 'your staging site is being prepared — it will be ready at this address in about a minute:',
   startAChangeFailed: 'starting a change did not complete — please try again',
   changeAlreadyOpen: 'a change is already open — finish it first',
   notInChange: 'start a change before doing this',
