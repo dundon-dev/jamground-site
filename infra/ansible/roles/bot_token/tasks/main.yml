@@ -1,0 +1,47 @@
+---
+# Secures the fine-grained GitHub bot token. A person mints the token by hand and drops
+# it at bot_token_source; this role relocates it to bot_token_dest with jamground group ownership
+# and 0640 perms, then deletes the world-readable original. On idempotent re-converge, the source
+# is already gone and the task skips cleanly.
+
+- name: Ensure /etc/jamground exists with proper ownership
+  ansible.builtin.file:
+    path: /etc/jamground
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Check if the token source exists
+  ansible.builtin.stat:
+    path: "{{ bot_token_source }}"
+  register: bot_token_source_stat
+
+- name: Check if the token destination exists
+  ansible.builtin.stat:
+    path: "{{ bot_token_dest }}"
+  register: bot_token_dest_stat
+
+- name: Secure the token by copying it to the destination with restricted perms
+  ansible.builtin.copy:
+    src: "{{ bot_token_source }}"
+    dest: "{{ bot_token_dest }}"
+    remote_src: true
+    owner: root
+    group: jamground
+    mode: '0640'
+  no_log: true
+  when: bot_token_source_stat.stat.exists
+
+- name: Delete the world-readable source after successful copy
+  ansible.builtin.file:
+    path: "{{ bot_token_source }}"
+    state: absent
+  when: bot_token_source_stat.stat.exists
+
+- name: Fail if neither source nor destination exists
+  ansible.builtin.fail:
+    msg: >-
+      Neither {{ bot_token_source }} nor {{ bot_token_dest }} exists.
+      An operator must provision the token at {{ bot_token_source }}; this role cannot create it.
+  when: not bot_token_source_stat.stat.exists and not bot_token_dest_stat.stat.exists

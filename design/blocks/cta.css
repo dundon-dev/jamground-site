@@ -1,0 +1,30 @@
+/* jamground/cta. The markup has no inner wrapper — section, heading, optional
+ * body, link — so the SECTION itself is the visual panel. That is a direct consequence of
+ * the frozen markup contract, not a styling preference. */
+.jp-cta {
+  max-width: var(--jp-container);
+  margin-inline: auto;
+  padding: var(--jp-space-8) var(--jp-gutter);
+  text-align: center;
+  background: var(--jp-color-accent-bg);
+  border-radius: var(--jp-radius-lg);
+}
+.jp-cta__heading { font-size: var(--jp-text-2xl); }
+.jp-cta__body {
+  margin-block-start: var(--jp-space-4);
+  color: var(--jp-color-text-muted);
+  max-width: 52ch;
+  margin-inline: auto;
+}
+/* Duplicated from hero.css ON PURPOSE — see the note there. */
+.jp-cta__link {
+  display: inline-block;
+  margin-block-start: var(--jp-space-6);
+  background: var(--jp-color-accent);
+  color: var(--jp-color-on-accent);
+  padding: var(--jp-space-3) var(--jp-space-5);
+  border-radius: var(--jp-radius-pill);
+  font-weight: var(--jp-weight-medium);
+  text-decoration: none;
+}
+.jp-cta__link:hover { background: var(--jp-color-link-hover); color: var(--jp-color-on-accent); }

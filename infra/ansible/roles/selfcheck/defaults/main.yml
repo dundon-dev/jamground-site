@@ -1,0 +1,13 @@
+---
+# Ansible-level names and paths only. The check script is templates/jamground-selfcheck.j2:
+# its DOMAIN comes from `jamground_domain` (group_vars/all.yml), because the fork's own name is
+# not something a shipped file may hardcode. Its thresholds and unit list are still literals —
+# the same choice roles/deploy's jamground-deploy makes, because a script invoked by systemd
+# with no control node in the loop cannot template itself at run time. A change to any of THOSE
+# must still be mirrored in templates/jamground-selfcheck.j2 and files/jamground-selfcheck-alert
+# by hand.
+selfcheck_script_path: /usr/local/bin/jamground-selfcheck
+selfcheck_alert_script_path: /usr/local/bin/jamground-selfcheck-alert
+selfcheck_service_name: jamground-selfcheck
+selfcheck_alert_service_name: jamground-selfcheck-alert
+selfcheck_timer_name: jamground-selfcheck.timer

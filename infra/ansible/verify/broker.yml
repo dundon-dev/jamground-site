@@ -1,0 +1,100 @@
+---
+# Two things a converge alone does not prove: the unit is actually running, and "the token
+# location on the edit vhost" (this task's own title) actually forwards to it rather than
+# falling through to editor_shell's `location /` and returning a static 404. Every request
+# below goes THROUGH the vhost by Host header (http://127.0.0.1/token, Host:
+# edit.<domain>) — the same routing proof verify/editor-shell.yml already uses for
+# `/` — and every assertion is on a rejection path (403/400), never a bare 200, the same
+# reasoning verify/webhook.yml gives for its own unsigned-delivery check: an accepted foreign
+# origin or an accepted empty body is the whole vulnerability the broker's exact-origin CORS and
+# PKCE checks exist to prevent, and a broker that merely answers is not a broker that refuses
+# correctly.
+#
+# `broker_service_name` is repeated here rather than sourced from roles/broker/defaults, the
+# same reasoning every other verify playbook in this tree already gives: a verify must not
+# depend on a converge-time variable it never loads. The two DOMAIN-shaped values below are a
+# different case — they are built from `jamground_domain`, which is inventory data in
+# group_vars/all.yml, loaded for this play before its first task exactly as it is for the
+# converge. Deriving them here is not depending on a role; repeating the literal was the thing
+# that let a verify silently check a domain the converge had stopped serving.
+- name: Verify the auth broker and its route on the edit vhost
+  hosts: jamground
+  gather_facts: false
+  vars:
+    broker_service_name: jamground-broker
+    broker_allowed_origin: "https://edit.{{ jamground_domain }}"
+    editor_shell_domain: "edit.{{ jamground_domain }}"
+  tasks:
+    - name: Query the broker unit state
+      ansible.builtin.command: systemctl is-active {{ broker_service_name }}
+      register: broker_active
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the broker unit is active
+      ansible.builtin.assert:
+        that:
+          - broker_active.stdout == 'active'
+        fail_msg: "{{ broker_service_name }} is not active: {{ broker_active.stdout }}"
+
+    - name: Preflight /token on the edit vhost, from the shell's own origin
+      ansible.builtin.uri:
+        url: http://127.0.0.1/token
+        method: OPTIONS
+        headers:
+          Host: "{{ editor_shell_domain }}"
+          Origin: "{{ broker_allowed_origin }}"
+        status_code: [204]
+      register: broker_vhost_preflight
+
+    - name: Assert the preflight echoes the exact origin, never a wildcard
+      ansible.builtin.assert:
+        that:
+          - broker_vhost_preflight.access_control_allow_origin == broker_allowed_origin
+        fail_msg: >-
+          /token's preflight allow-origin was
+          {{ broker_vhost_preflight.access_control_allow_origin | default('missing') }} —
+          expected exactly {{ broker_allowed_origin }}, never a wildcard.
+
+    - name: POST /token on the edit vhost from a foreign origin — must be refused
+      ansible.builtin.uri:
+        url: http://127.0.0.1/token
+        method: POST
+        headers:
+          Host: "{{ editor_shell_domain }}"
+          Origin: https://evil.example.com
+        body_format: json
+        body:
+          code: CODE
+          code_verifier: VERIFIER
+        status_code: [403]
+      register: broker_vhost_foreign
+
+    - name: Assert the foreign origin was rejected, not proxied through as a success
+      ansible.builtin.assert:
+        that:
+          - broker_vhost_foreign.status == 403
+        fail_msg: >-
+          A foreign origin through the edit vhost returned {{ broker_vhost_foreign.status }}
+          instead of 403.
+
+    - name: POST /token on the edit vhost with no parameters — must be refused
+      ansible.builtin.uri:
+        url: http://127.0.0.1/token
+        method: POST
+        headers:
+          Host: "{{ editor_shell_domain }}"
+          Origin: "{{ broker_allowed_origin }}"
+        body_format: json
+        body: {}
+        status_code: [400]
+      register: broker_vhost_missing
+
+    - name: Assert missing parameters were rejected
+      ansible.builtin.assert:
+        that:
+          - broker_vhost_missing.status == 400
+        fail_msg: >-
+          A request with no code/code_verifier through the edit vhost returned
+          {{ broker_vhost_missing.status }} instead of 400.

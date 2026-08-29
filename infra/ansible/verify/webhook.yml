@@ -1,0 +1,47 @@
+---
+# Two things a converge alone does not prove: the unit is actually running (a template drop with
+# no restart is not "done"), and the receiver actually rejects what it must reject. The second is
+# the one that matters — an ACCEPTED unsigned request is the whole vulnerability
+# (see infra/hooks/lib/hmac.mjs) — so the assertion below is on the 401,
+# never on a 200.
+#
+# `webhook_port` and `webhook_service_name` are repeated here rather than sourced from
+# roles/webhook/defaults — a verify playbook must not depend on a converge-time variable it
+# never loads.
+- name: Verify the webhook receiver
+  hosts: jamground
+  gather_facts: false
+  vars:
+    webhook_port: 9000
+    webhook_service_name: jamground-webhook
+  tasks:
+    - name: Query the webhook unit state
+      ansible.builtin.command: systemctl is-active {{ webhook_service_name }}
+      register: webhook_active
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the webhook unit is active
+      ansible.builtin.assert:
+        that:
+          - webhook_active.stdout == 'active'
+        fail_msg: "{{ webhook_service_name }} is not active: {{ webhook_active.stdout }}"
+
+    - name: POST an unsigned webhook delivery — must be rejected
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webhook_port }}/"
+        method: POST
+        body_format: json
+        body:
+          zen: "unsigned delivery — must never be accepted"
+        status_code: [401]
+      register: webhook_unsigned_post
+
+    - name: Assert the unsigned request was rejected, not accepted
+      ansible.builtin.assert:
+        that:
+          - webhook_unsigned_post.status == 401
+        fail_msg: >-
+          Unsigned POST returned {{ webhook_unsigned_post.status }} instead of 401 — an accepted
+          unsigned request is the whole vulnerability this receiver exists to prevent.

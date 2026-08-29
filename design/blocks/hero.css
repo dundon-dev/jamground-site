@@ -1,0 +1,40 @@
+/* jamground/hero. No @import here or in any sibling: each block sheet must stand alone so it
+ * can be enqueued independently of the others, and a sheet that pulled the tokens in itself
+ * would duplicate them wherever both are loaded together. */
+.jp-hero {
+  max-width: var(--jp-container);
+  margin-inline: auto;
+  padding: var(--jp-space-8) var(--jp-gutter);
+  text-align: center;
+}
+.jp-hero__heading {
+  font-size: var(--jp-text-3xl);
+  max-width: 20ch;
+  margin-inline: auto;
+}
+.jp-hero__body {
+  margin-block-start: var(--jp-space-5);
+  font-size: var(--jp-text-lg);
+  color: var(--jp-color-text-muted);
+  max-width: 52ch;
+  margin-inline: auto;
+}
+.jp-hero__media {
+  margin-block-start: var(--jp-space-7);
+  margin-inline: auto;
+  border-radius: var(--jp-radius-lg);
+  box-shadow: var(--jp-shadow-md);
+}
+/* Duplicated in cta.css ON PURPOSE — each sheet must stand alone for enqueue_block_assets.
+ * Do not "helpfully" hoist this into a shared file. */
+.jp-hero__cta {
+  display: inline-block;
+  margin-block-start: var(--jp-space-6);
+  background: var(--jp-color-accent);
+  color: var(--jp-color-on-accent);
+  padding: var(--jp-space-3) var(--jp-space-5);
+  border-radius: var(--jp-radius-pill);
+  font-weight: var(--jp-weight-medium);
+  text-decoration: none;
+}
+.jp-hero__cta:hover { background: var(--jp-color-link-hover); color: var(--jp-color-on-accent); }

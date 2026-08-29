@@ -1,0 +1,83 @@
+---
+/* Blog post route. Renders individual posts. getStaticPaths enumerates
+ * Settings.locales and posts within each locale. Post bodies render through PostBody.astro,
+ * never Astro's markdown pipeline. Drafts are absent from production output entirely:
+ * no route, no file, no sitemap entry. */
+import { getCollection } from 'astro:content';
+import { settings } from '../../../content.config';
+import { localeToSegment } from '../../../contract/defs';
+import { resolveDraftFlag } from '../../../contract/env';
+import PostBody from '../../../components/PostBody.astro';
+import { pathForAuthor, pathForTag } from '../../../lib/links';
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+
+type Props = {
+  post: Awaited<ReturnType<typeof getCollection<'posts'>>>[number];
+  author: Awaited<ReturnType<typeof getCollection<'authors'>>>[number];
+};
+
+const { post, author } = Astro.props as Props;
+
+export async function getStaticPaths() {
+  const allPosts = await getCollection('posts');
+  const allAuthors = await getCollection('authors');
+  const includeDrafts = resolveDraftFlag();
+
+  return settings.locales
+    .flatMap(locale => {
+      // Get all posts for this locale
+      const postList = allPosts.filter(p => p.data.locale === locale);
+
+      // Exclude drafts from production output entirely
+      const filtered = postList.filter(
+        p => includeDrafts || p.data.status !== 'draft',
+      );
+
+      return filtered.map(p => {
+        // Find the author for this post using the translation group ID
+        const postAuthor = allAuthors.find(a => a.data.translationOf === p.data.author);
+
+        return {
+          params: { locale: localeToSegment(locale), slug: p.data.slug },
+          props: { post: p, author: postAuthor },
+        };
+      });
+    });
+}
+
+/* The locale argument is not optional: toLocaleDateString() without one reads the host's
+ * default ICU locale, so the same content would emit different bytes on a developer's
+ * machine and in CI, and reproducibility.test.mjs compares sha256 per file. */
+const formatDate = (iso: string, locale: string) =>
+  new Date(iso).toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
+
+---
+
+<BaseLayout
+  title={post.data.seo?.title ?? post.data.title}
+  description={post.data.seo?.description}
+  locale={post.data.locale}
+>
+  <article class="site-post site-container">
+    <header class="site-post-header">
+      <h1 class="site-post-title">{post.data.title}</h1>
+      <p class="site-post-meta">
+        {post.data.publishedAt && (
+          <time datetime={post.data.publishedAt}>{formatDate(post.data.publishedAt, post.data.locale)}</time>
+        )}
+        {post.data.publishedAt && author && <span> · </span>}
+        {author && (
+          <a href={pathForAuthor(post.data.locale, author.data.slug)}>{author.data.name}</a>
+        )}
+      </p>
+      {post.data.tags && post.data.tags.length > 0 && (
+        <ul class="site-tag-list">
+          {post.data.tags.map(tag => (
+            <li><a class="site-tag" href={pathForTag(post.data.locale, tag)}>{tag}</a></li>
+          ))}
+        </ul>
+      )}
+    </header>
+    <div class="site-prose"><PostBody body={post.body} /></div>
+  </article>
+</BaseLayout>

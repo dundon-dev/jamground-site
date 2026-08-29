@@ -1,0 +1,22 @@
+---
+# Paths and identity for the webhook receiver (`infra/hooks/` is the application code; this
+# role is the courier). Repeated as literals rather than imported from
+# a sibling role's variables — the same reasoning roles/content_repos and roles/deploy already
+# give for not trusting another role's variable names to stay stable.
+webhook_app_dir: /opt/jamground/webhook
+webhook_state_dir: /var/lib/jamground-hooks
+webhook_queue_dir: "{{ webhook_state_dir }}/queue"
+webhook_markers_dir: "{{ webhook_state_dir }}/markers"
+webhook_locks_dir: "{{ webhook_state_dir }}/locks"
+webhook_secret_file: /etc/jamground/webhook.secret
+webhook_port: 9000
+webhook_service_name: jamground-webhook
+
+# Editors push branches against the CONTENT repository only, so its pull requests are
+# what the preview trigger (open/close) fires on.
+webhook_github_org: "{{ jamground_github_org }}"
+webhook_github_repo: "{{ jamground_content_repo }}"
+webhook_domain: "hooks.{{ jamground_domain }}"
+webhook_url: "https://{{ webhook_domain }}/"
+webhook_events:
+  - pull_request

@@ -1,0 +1,48 @@
+---
+# Verifies that the GitHub bot token has been successfully secured: the destination file exists
+# with restricted perms and jamground group ownership, and the world-readable source has been
+# deleted. Assert the VALUES, not that stat ran — the role may have skipped on idempotent
+# re-converge if the source was already deleted.
+#
+# The paths are repeated here as literals rather than sourced from roles/bot_token/defaults,
+# the same way verify/deploy.yml and verify/nginx.yml already follow, because a verify playbook
+# must not depend on a converge-time variable it never loads.
+- name: Verify the GitHub bot token is secured
+  hosts: jamground
+  gather_facts: false
+  vars:
+    bot_token_source: /root/jamground.pat
+    bot_token_dest: /etc/jamground/github-bot.token
+  tasks:
+    - name: Stat the token destination file
+      ansible.builtin.stat:
+        path: "{{ bot_token_dest }}"
+      register: bot_token_dest_stat
+
+    - name: Assert the destination exists with correct ownership and mode
+      ansible.builtin.assert:
+        that:
+          - bot_token_dest_stat.stat.exists
+          - bot_token_dest_stat.stat.mode == '0640'
+          - bot_token_dest_stat.stat.pw_name == 'root'
+          - bot_token_dest_stat.stat.gr_name == 'jamground'
+        fail_msg: >-
+          {{ bot_token_dest }} does not exist or has incorrect permissions.
+          Expected: exists, mode 0640, owner root, group jamground.
+          Actual: exists={{ bot_token_dest_stat.stat.exists }},
+          mode={{ bot_token_dest_stat.stat.mode }},
+          owner={{ bot_token_dest_stat.stat.pw_name }},
+          group={{ bot_token_dest_stat.stat.gr_name }}
+
+    - name: Stat the token source file
+      ansible.builtin.stat:
+        path: "{{ bot_token_source }}"
+      register: bot_token_source_stat
+
+    - name: Assert the source has been deleted
+      ansible.builtin.assert:
+        that:
+          - not bot_token_source_stat.stat.exists
+        fail_msg: >-
+          {{ bot_token_source }} still exists and is world-readable.
+          The role must delete it after copying to {{ bot_token_dest }}.

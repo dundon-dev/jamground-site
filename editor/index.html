@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jamground Editor</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    #wp {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+    #jamground-controls {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      gap: 10px;
+      z-index: 10000;
+      background: white;
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .jamground-control-button {
+      padding: 8px 16px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: white;
+      cursor: pointer;
+      font-size: 14px;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .jamground-control-button:hover {
+      background: #f5f5f5;
+    }
+    .jamground-control-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    #jamground-status {
+      position: fixed;
+      bottom: 70px;
+      right: 20px;
+      z-index: 10000;
+      max-width: 320px;
+      font-size: 13px;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    #jamground-status:empty {
+      display: none;
+    }
+  </style>
+</head>
+<body id="jamground-shell">
+  <iframe id="wp"></iframe>
+  <div id="jamground-status" role="status" aria-live="polite"></div>
+  <div id="jamground-controls">
+    <button id="jamground-control-signIn" class="jamground-control-button">sign in</button>
+    <button id="jamground-control-startAChange" class="jamground-control-button" disabled>start a change</button>
+    <button id="jamground-control-save" class="jamground-control-button" disabled>save this change</button>
+    <button id="jamground-control-sendForReview" class="jamground-control-button" disabled>send for review</button>
+    <button id="jamground-control-publish" class="jamground-control-button" disabled>publish</button>
+  </div>
+  <script type="module" src="shell.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+---
+/* core/heading. Markup observed from core's own save.js (src/heading/save.js:
+ * `<h${level}>` plus `wp-block-heading`). `level` is 2–4 by the contract,
+ * matching the h2–h4 construct-set cap — h1 and h5–h6 are unreachable, not
+ * merely unused.
+ * Dynamic tag name follows Astro's own supported pattern (a capitalised variable holding the
+ * tag string); Props follow the Heading member of the Block union, imported by relative .ts
+ * path from ../../contract/blocks.ts. */
+import type { z } from 'zod';
+import type { Block } from '../../contract/blocks.ts';
+
+type Props = Omit<Extract<z.infer<typeof Block>, { type: 'heading' }>, 'type'>;
+
+const { level, text } = Astro.props as Props;
+const Tag = `h${level}` as 'h2' | 'h3' | 'h4';
+---
+<Tag class="wp-block-heading">{text}</Tag>

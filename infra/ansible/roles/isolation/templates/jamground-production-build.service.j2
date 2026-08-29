@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+#
+# The per-build resource envelope for a production deploy. ExecStart is a placeholder — today's
+# jamground-deploy (roles/deploy) is invoked directly, not through systemd, so nothing
+# instantiates this unit yet. What this ships, and what verify/isolation.yml asserts, is the
+# envelope itself: MemoryMax as a backstop against a hung build consuming the box even on the
+# favoured side, RuntimeMaxSec so a stuck build cannot run forever, PrivateNetwork=yes so a build
+# in progress cannot reach outward. Wiring a real command through it is a later task's job.
+[Unit]
+Description=jamground production build — per-build resource envelope
+After=network.target
+
+[Service]
+Type=oneshot
+Slice={{ isolation_production_slice }}
+User=jamground-build
+Group=jamground-build
+MemoryMax={{ isolation_production_build_memory_max }}
+RuntimeMaxSec={{ isolation_production_build_runtime_max_sec }}
+PrivateNetwork=yes
+NoNewPrivileges=yes
+ExecStart=/bin/true

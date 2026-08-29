@@ -1,0 +1,8 @@
+---
+# Fixture: the deploy-time half, agreeing with jamground.config.mjs on all six values.
+jamground_domain: example.com
+jamground_github_org: your-org
+jamground_site_repo: jamground-site
+jamground_content_repo: jamground-content
+jamground_content_branch: main
+jamground_oauth_client_id: Ov23liEXAMPLE0CLIENT

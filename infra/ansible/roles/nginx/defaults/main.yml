@@ -1,0 +1,9 @@
+---
+# Names and paths shared with roles that converge after this one: roles/certificates writes
+# the certificate this role's stat check watches, and roles/deploy owns the release symlink
+# this role's root points at. Defined once so those two cannot silently drift from what nginx
+# actually serves.
+nginx_domain: "{{ jamground_domain }}"
+nginx_release_root: /srv/jamground/current
+nginx_previews_root: /srv/previews
+nginx_cert_dir: "/etc/letsencrypt/live/{{ nginx_domain }}"

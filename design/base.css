@@ -1,0 +1,303 @@
+/* Reset, element defaults, layout primitives, page chrome, and the eight core wp-block-*
+ * selectors. Reads the semantic colour tokens only — never a ramp step (see tokens.css).
+ *
+ * Two placements are deliberate. The custom jamground/* blocks each get their own file under
+ * blocks/, but the wp-block-* rules live here instead: that markup is WordPress core's own
+ * OBSERVED save() output, not ours to author, so it sits with the element defaults rather
+ * than as a block sheet of its own. Page chrome lives here for the same reason: it is
+ * site-only, not a block, so it has no block sheet to live in either. */
+
+/* --- 1. Reset and element defaults ------------------------------------------------ */
+*, *::before, *::after { box-sizing: border-box; }
+body, h1, h2, h3, h4, p, figure, blockquote, ul, ol, dl, dd { margin: 0; }
+/* Named, not `ul[class]`. The [class] idiom is (0,1,1) — higher than any single class — so
+ * it silently beat both `.wp-block-list`'s markers and `.site-container`'s gutter padding on
+ * the post list, and each looked like a different bug. Listing the lists this stylesheet
+ * actually owns keeps the reset at (0,1,0) and out of everything else's way. */
+.site-nav__list,
+.site-nav__sublist,
+.site-tag-list,
+.site-post-list,
+.site-footer__social { list-style: none; padding: 0; }
+img { max-width: 100%; height: auto; display: block; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  background: var(--jp-color-bg);
+  color: var(--jp-color-text);
+  font-family: var(--jp-font-sans);
+  font-size: var(--jp-text-base);
+  line-height: var(--jp-leading-normal);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+h1, h2, h3, h4 {
+  color: var(--jp-color-heading);
+  font-weight: var(--jp-weight-bold);
+  line-height: var(--jp-leading-tight);
+  letter-spacing: var(--jp-tracking-tight);
+  text-wrap: balance;
+}
+h1 { font-size: var(--jp-text-3xl); }
+h2 { font-size: var(--jp-text-2xl); }
+h3 { font-size: var(--jp-text-xl); }
+h4 { font-size: var(--jp-text-lg); }
+p  { text-wrap: pretty; }
+
+a {
+  color: var(--jp-color-link);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+a:hover { color: var(--jp-color-link-hover); }
+
+:focus-visible {
+  outline: 2px solid var(--jp-color-focus);
+  outline-offset: 2px;
+  border-radius: var(--jp-radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* --- 2. Layout primitives --------------------------------------------------------- */
+.site-container {
+  width: 100%;
+  max-width: var(--jp-container);
+  margin-inline: auto;
+  padding-inline: var(--jp-gutter);
+}
+
+.site-main { flex: 1 0 auto; padding-block: var(--jp-space-7); }
+
+.site-skip { position: absolute; left: -9999px; }
+.site-skip:focus {
+  left: var(--jp-space-4);
+  top: var(--jp-space-4);
+  z-index: 10;
+  background: var(--jp-color-surface);
+  padding: var(--jp-space-3) var(--jp-space-4);
+  border-radius: var(--jp-radius-md);
+  box-shadow: var(--jp-shadow-md);
+}
+
+/* A readable measure and a vertical rhythm applied to CHILDREN, so block markup needs no
+ * wrapper of its own — block markup is frozen, so this rule may only style what already
+ * exists, never add an element to hang a style on. .site-blocks is .site-prose plus the
+ * three custom blocks going full-bleed. */
+:is(.site-prose, .site-blocks) > * {
+  max-width: var(--jp-measure);
+  margin-inline: auto;
+}
+:is(.site-prose, .site-blocks) > * + * { margin-block-start: var(--jp-space-5); }
+:is(.site-prose, .site-blocks) > :is(h2, h3, h4) { margin-block-start: var(--jp-space-7); }
+
+/* The container width, NOT `none`: each custom block already centres itself at
+ * --jp-container, and releasing them entirely made the cta's rounded panel run wider than
+ * the header above it. They opt out of the prose measure, not out of the page. */
+.site-blocks > :is(.jp-hero, .jp-cta, .jp-feature-grid) { max-width: var(--jp-container); }
+/* No margin between them: every custom block carries its own generous block padding, and
+ * adding a margin on top of that stacked two gaps into one void. */
+.site-blocks > * + :is(.jp-hero, .jp-cta, .jp-feature-grid) { margin-block-start: 0; }
+.site-blocks > :first-child { margin-block-start: 0; }
+
+/* --- 3. Page chrome --------------------------------------------------------------- */
+.site-header {
+  border-block-end: 1px solid var(--jp-color-border);
+  background: var(--jp-color-bg);
+}
+.site-header__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jp-space-5);
+  min-height: 4rem;
+  flex-wrap: wrap;
+}
+.site-brand {
+  font-weight: var(--jp-weight-bold);
+  font-size: var(--jp-text-lg);
+  color: var(--jp-color-heading);
+  text-decoration: none;
+  letter-spacing: var(--jp-tracking-tight);
+}
+
+.site-nav__list { display: flex; gap: var(--jp-space-5); align-items: center; flex-wrap: wrap; }
+.site-nav__item { position: relative; }
+.site-nav__link,
+.site-nav__label {
+  color: var(--jp-color-text-muted);
+  font-size: var(--jp-text-sm);
+  font-weight: var(--jp-weight-medium);
+  text-decoration: none;
+}
+.site-nav__link:hover { color: var(--jp-color-text); }
+/* Styled off the attribute, not a class: the accessible signal and the visual one cannot
+ * then drift apart. */
+.site-nav__link[aria-current="page"] { color: var(--jp-color-heading); }
+
+.site-nav__sublist { display: flex; gap: var(--jp-space-4); padding-inline-start: var(--jp-space-4); }
+@media (min-width: 48rem) {
+  .site-nav__sublist {
+    position: absolute;
+    inset-inline-start: 0;
+    top: 100%;
+    display: none;
+    flex-direction: column;
+    min-width: 12rem;
+    padding: var(--jp-space-3);
+    background: var(--jp-color-surface);
+    border: 1px solid var(--jp-color-border);
+    border-radius: var(--jp-radius-md);
+    box-shadow: var(--jp-shadow-md);
+  }
+  .site-nav__item:hover > .site-nav__sublist,
+  .site-nav__item:focus-within > .site-nav__sublist { display: flex; }
+}
+
+.site-footer {
+  border-block-start: 1px solid var(--jp-color-border);
+  background: var(--jp-color-bg-subtle);
+  padding-block: var(--jp-space-6);
+  color: var(--jp-color-text-muted);
+  font-size: var(--jp-text-sm);
+}
+.site-footer__inner { display: flex; justify-content: space-between; gap: var(--jp-space-5); flex-wrap: wrap; }
+.site-footer__social { display: flex; gap: var(--jp-space-4); }
+
+/* --- 4. Page-level content shapes ------------------------------------------------- */
+.site-page-header { margin-block-end: var(--jp-space-7); }
+.site-page-title { margin: 0; }
+
+.site-post-list { display: grid; gap: var(--jp-space-6); }
+.site-post-list__item {
+  padding-block-end: var(--jp-space-6);
+  border-block-end: 1px solid var(--jp-color-border);
+}
+.site-post-list__item:last-child { border-block-end: 0; padding-block-end: 0; }
+.site-post-list__title { font-size: var(--jp-text-xl); margin-block-end: var(--jp-space-2); }
+.site-post-list__title a { color: var(--jp-color-heading); text-decoration: none; }
+.site-post-list__title a:hover { color: var(--jp-color-link); }
+.site-post-excerpt { color: var(--jp-color-text-muted); margin-block-start: var(--jp-space-3); }
+
+.site-post-meta {
+  color: var(--jp-color-text-muted);
+  font-size: var(--jp-text-sm);
+  margin-block-start: var(--jp-space-2);
+}
+/* On the prose measure, and centred the same way, so the title, the meta line and the body
+ * all share one left edge. Without this the header sits flush to the 68rem container while
+ * .site-prose centres its children at 38rem. */
+.site-post-header {
+  max-width: var(--jp-measure);
+  margin-inline: auto;
+  margin-block-end: var(--jp-space-7);
+}
+.site-post-title { margin: 0; }
+.site-post > .site-prose { margin-block-start: var(--jp-space-6); }
+
+.site-tag-list { display: flex; flex-wrap: wrap; gap: var(--jp-space-2); margin-block-start: var(--jp-space-4); }
+.site-tag {
+  display: inline-block;
+  padding: var(--jp-space-1) var(--jp-space-3);
+  border-radius: var(--jp-radius-pill);
+  background: var(--jp-color-accent-bg);
+  color: var(--jp-color-link);
+  font-size: var(--jp-text-xs);
+  font-weight: var(--jp-weight-medium);
+  text-decoration: none;
+}
+
+.site-author__identity { display: flex; gap: var(--jp-space-5); align-items: center; }
+.site-author__avatar {
+  width: 5rem;
+  height: 5rem;
+  border-radius: var(--jp-radius-pill);
+  object-fit: cover;
+}
+.site-author__role { color: var(--jp-color-text-muted); margin-block-start: var(--jp-space-1); }
+
+.site-error { text-align: center; padding-block: var(--jp-space-9); }
+.site-error p { color: var(--jp-color-text-muted); margin-block-start: var(--jp-space-4); }
+.site-button {
+  display: inline-block;
+  margin-block-start: var(--jp-space-6);
+  background: var(--jp-color-accent);
+  color: var(--jp-color-on-accent);
+  padding: var(--jp-space-3) var(--jp-space-5);
+  border-radius: var(--jp-radius-pill);
+  font-weight: var(--jp-weight-medium);
+  text-decoration: none;
+}
+.site-button:hover { background: var(--jp-color-link-hover); color: var(--jp-color-on-accent); }
+
+/* --- 5. The core block markup contract -------------------------------------------- */
+/* Eight selectors, observed from WordPress core's own save() output and frozen by
+ * test/blocks/core.test.mjs. Styled here; never touched in markup. wp-block-heading is
+ * deliberately absent — the element rules above already cover it, and a duplicate rule is
+ * somewhere for the two to drift. */
+.wp-block-list { padding-inline-start: var(--jp-space-6); }
+.wp-block-list li + li { margin-block-start: var(--jp-space-2); }
+.wp-block-list .wp-block-list { margin-block-start: var(--jp-space-2); }
+
+.wp-block-image { margin-block: var(--jp-space-6); }
+.wp-block-image img { border-radius: var(--jp-radius-md); width: 100%; }
+.wp-element-caption {
+  margin-block-start: var(--jp-space-3);
+  font-size: var(--jp-text-sm);
+  color: var(--jp-color-text-muted);
+  text-align: center;
+}
+
+.wp-block-quote {
+  border-inline-start: 3px solid var(--jp-color-accent);
+  padding-inline-start: var(--jp-space-5);
+  font-size: var(--jp-text-lg);
+  color: var(--jp-color-heading);
+}
+.wp-block-quote cite {
+  display: block;
+  margin-block-start: var(--jp-space-3);
+  font-size: var(--jp-text-sm);
+  font-style: normal;
+  color: var(--jp-color-text-muted);
+}
+
+.wp-block-code {
+  background: var(--jp-color-bg-subtle);
+  border: 1px solid var(--jp-color-border);
+  border-radius: var(--jp-radius-md);
+  padding: var(--jp-space-4);
+  overflow-x: auto;
+  font-family: var(--jp-font-mono);
+  font-size: var(--jp-text-sm);
+  line-height: var(--jp-leading-snug);
+}
+
+.wp-block-table { overflow-x: auto; }
+.wp-block-table table.has-fixed-layout {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--jp-text-sm);
+}
+.wp-block-table :is(th, td) {
+  padding: var(--jp-space-3);
+  text-align: start;
+  border-block-end: 1px solid var(--jp-color-border);
+}
+.wp-block-table th { color: var(--jp-color-heading); font-weight: var(--jp-weight-medium); }
+
+.wp-block-separator.has-alpha-channel-opacity {
+  border: 0;
+  height: 1px;
+  background: var(--jp-color-border);
+  margin-block: var(--jp-space-7);
+}

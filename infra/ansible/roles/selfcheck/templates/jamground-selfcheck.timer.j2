@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+#
+# Every five minutes — monitoring and alerting on the production root, watching production
+# availability and error rates. Persistent=true so a box that was
+# down across a boot runs the missed check promptly rather than waiting up to five minutes for
+# the next natural tick — the same shape a missed cert-expiry or disk-headroom check would
+# otherwise cost silently.
+[Unit]
+Description=jamground on-box selfcheck — every five minutes
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+Unit={{ selfcheck_service_name }}.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,26 @@
+# {{ ansible_managed }}
+#
+# Fired every five minutes by jamground-selfcheck.timer, and once by hand in
+# verify/selfcheck.yml. OnFailure= is the whole of "with OnFailure alerting":
+# a failed check here fires jamground-selfcheck-alert.service, the one unit that raises the
+# alarm — this service never notifies anyone itself, so a check written to assert something and
+# a check written to raise the alarm cannot silently diverge into two different opinions about
+# what failure looks like.
+#
+# User=jamground-build, the same unprivileged build account roles/deploy's build runs as —
+# the script reads what nginx SERVES rather than any file on disk, so it needs no
+# grant beyond the network.
+[Unit]
+Description=jamground on-box selfcheck — HTTP, disk, certificate, unit liveness
+After=network.target nginx.service
+OnFailure={{ selfcheck_alert_service_name }}.service
+
+[Service]
+Type=oneshot
+User=jamground-build
+Group=jamground-build
+ExecStart={{ selfcheck_script_path }}
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes

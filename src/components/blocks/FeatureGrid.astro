@@ -1,0 +1,20 @@
+---
+/* jamground/feature-grid. Dynamic block; see Hero.astro for the fidelity note.
+ * `icon` (FeatureGrid's per-item field) carries no markup contract —
+ * the table names only `__item`, `__heading`, `__body` — so it is not rendered here; adding
+ * one is a markup-contract change, not something this component may decide on its own. */
+import type { z } from 'zod';
+import type { Block } from '../../contract/blocks.ts';
+
+type Props = Omit<Extract<z.infer<typeof Block>, { type: 'featureGrid' }>, 'type'>;
+
+const { columns, items } = Astro.props as Props;
+---
+<section class="jp-feature-grid" data-columns={columns}>
+  {items.map((item) => (
+    <div class="jp-feature-grid__item">
+      <h3 class="jp-feature-grid__heading">{item.heading}</h3>
+      <p class="jp-feature-grid__body">{item.body}</p>
+    </div>
+  ))}
+</section>

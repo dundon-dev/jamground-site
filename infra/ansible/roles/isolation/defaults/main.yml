@@ -1,0 +1,32 @@
+---
+# Resource envelope for anything that builds: two systemd slices favouring production over
+# preview, a per-build unit carrying the actual caps, and the filesystem previews live on.
+#
+# `isolation_previews_root` repeats roles/nginx's `nginx_previews_root` as a literal rather than
+# importing it — the same convention roles/webhook and roles/deploy already follow for a path
+# two roles both need, because a role must not depend on another role's variable staying named
+# the same.
+isolation_previews_root: /srv/previews
+isolation_previews_image: /var/lib/jamground/previews.img
+# 10 GB out of the box's 197 GB disk (infra/RUNBOOK.md §The-environment) — generous next to "one
+# static root per open PR, a trivial disk budget", while still being a fixed
+# ceiling separate from / so a runaway preview build cannot block a production deploy that needs
+# space there.
+isolation_previews_size_mb: 10240
+
+isolation_production_slice: jamground-production.slice
+isolation_preview_slice: jamground-preview.slice
+isolation_production_cpu_weight: 500
+isolation_preview_cpu_weight: 50
+
+# Two concurrent preview builds at ~1.2 GB each while sharp runs is ~2.4 GB;
+# 3072M leaves headroom above that measured figure without leaving so much slack that a leaked or
+# stuck preview build can still starve the 8 GB box the production build shares it with.
+isolation_preview_slice_memory_max: 3072M
+isolation_preview_build_memory_max: 1536M
+isolation_preview_build_runtime_max_sec: 600
+
+# Production is favoured — higher weight, no slice-wide cap — but a per-build unit still gets a
+# backstop: being the trusted side must not mean being able to hang or leak without limit.
+isolation_production_build_memory_max: 4096M
+isolation_production_build_runtime_max_sec: 1800

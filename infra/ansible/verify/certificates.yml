@@ -1,0 +1,68 @@
+---
+# Reads the LIVE certificate rather than trusting that the converge exited 0: certbot can succeed
+# while covering the wrong names (a typo'd -d argument still issues a certificate, just not the
+# one the converge needs). Six names are required — apex, www, edit, hooks, preview and *.preview —
+# issued via exactly three -d arguments (infra/RUNBOOK.md §Certificates), so a wildcard SAN is
+# counted as covering ONLY its own label: *.<domain> covers www/edit/hooks/preview, NOT
+# *.preview.<domain> two labels down, and *.preview.<domain> does not cover the bare `preview`
+# label either — that is covered by the OTHER wildcard, one level up.
+#
+# The domain is taken from `jamground_domain` rather than from roles/certificates/defaults. A
+# verify must not depend on a converge-time variable it never loads, and this is not an
+# exception to that: group_vars/all.yml is inventory data, loaded
+# for this play before its first task, not a role default this play would have to converge to
+# see. Repeating the literal was the failure mode, not the fix: a verify holding its own copy of
+# the domain goes on asserting about a name the converge no longer serves.
+- name: Verify the certificate covers all six required names
+  hosts: jamground
+  gather_facts: false
+  vars:
+    certificates_domain: "{{ jamground_domain }}"
+    certificates_live_dir: "/etc/letsencrypt/live/{{ certificates_domain }}"
+    certificates_required_names:
+      - "{{ certificates_domain }}"
+      - "www.{{ certificates_domain }}"
+      - "edit.{{ certificates_domain }}"
+      - "hooks.{{ certificates_domain }}"
+      - "preview.{{ certificates_domain }}"
+      - "*.preview.{{ certificates_domain }}"
+  tasks:
+    - name: Read the live certificate
+      community.crypto.x509_certificate_info:
+        path: "{{ certificates_live_dir }}/cert.pem"
+      register: certificates_cert_info
+
+    - name: Extract the SAN DNS entries (community.crypto returns e.g. "DNS:example.com")
+      ansible.builtin.set_fact:
+        certificates_sans: "{{ certificates_cert_info.subject_alt_name | default([]) | map('regex_replace', '^DNS:', '') | list }}"
+
+    - name: Determine which required names the SAN list does not cover
+      ansible.builtin.set_fact:
+        certificates_uncovered: >-
+          {%- set ns = namespace(missing=[]) -%}
+          {%- for name in certificates_required_names -%}
+          {%- set ns2 = namespace(found=false) -%}
+          {%- for san in certificates_sans -%}
+          {%- set name_labels = name.split('.') -%}
+          {%- set san_labels = san.split('.') -%}
+          {%- if san == name -%}
+          {%- set ns2.found = true -%}
+          {%- elif san_labels[0] == '*' and (name_labels | length) == (san_labels | length) and (name_labels[1:] == san_labels[1:]) -%}
+          {%- set ns2.found = true -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- if not ns2.found -%}
+          {%- set ns.missing = ns.missing + [name] -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ ns.missing }}
+
+    - name: Assert every required name is covered, at the label depth it actually claims
+      ansible.builtin.assert:
+        that:
+          - certificates_uncovered == []
+        fail_msg: >-
+          Not covered by the live certificate's SANs ({{ certificates_sans }}):
+          {{ certificates_uncovered }}. A wildcard covers exactly one label — `preview` is
+          covered by *.{{ certificates_domain }}, not by its own wildcard, and
+          *.preview.{{ certificates_domain }} does not cover `preview` either.

@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+#
+# The OnFailure= target of jamground-selfcheck.service — never fired directly. Runs as root:
+# reading another unit's journal lines and writing to the system journal at LOG_ALERT are both
+# things this unit needs to do reliably regardless of which unprivileged account the failing
+# check happened to run as.
+[Unit]
+Description=jamground selfcheck alert — logs a failed run to the journal at LOG_ALERT
+
+[Service]
+Type=oneshot
+ExecStart={{ selfcheck_alert_script_path }}

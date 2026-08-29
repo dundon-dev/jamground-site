@@ -1,0 +1,90 @@
+---
+# A converge alone proves the drop-in was rendered, not that nginx actually picked it up, that
+# the shell it points at is really on disk, or that a request carrying the edit vhost's Host
+# header gets the shell rather than the main site's redirect (`if
+# ($jamground_redirect) { return 301 $jamground_redirect; }` fires on ANY vhost sharing that
+# server block unless this one is genuinely separate). The 301-to-/en-us/ verify/nginx.yml
+# proves for the SITE vhost is exactly the wrong answer here — a request for edit.<domain>
+# landing on the site's redirect instead of the shell would pass a converge that only checked
+# exit codes and fail every editor in the browser.
+#
+# `editor_shell_conf_path` and `editor_shell_root` are repeated here rather than sourced from
+# roles/editor_shell/defaults, the same reasoning verify/deploy.yml and verify/webhook.yml
+# already give for every other verify playbook: a verify must not depend on a converge-time
+# variable it never loads. `editor_shell_domain` is built from `jamground_domain` instead —
+# group_vars/all.yml is inventory data every play loads before its first task, so nothing here
+# depends on a role having converged, and the vhost this play proves is by construction the one
+# the converge served.
+- name: Verify the edit vhost is on disk, valid, and actually serves the shell
+  hosts: jamground
+  gather_facts: false
+  vars:
+    editor_shell_domain: "edit.{{ jamground_domain }}"
+    editor_shell_conf_path: /etc/nginx/conf.d/edit.conf
+    editor_shell_root: /srv/editor-shell
+  tasks:
+    - name: Stat the edit vhost drop-in
+      ansible.builtin.stat:
+        path: "{{ editor_shell_conf_path }}"
+      register: editor_shell_conf_stat
+
+    - name: Assert the drop-in exists
+      ansible.builtin.assert:
+        that:
+          - editor_shell_conf_stat.stat.exists
+        fail_msg: "{{ editor_shell_conf_path }} does not exist"
+
+    - name: Validate the full nginx configuration
+      ansible.builtin.command:
+        argv:
+          - nginx
+          - -t
+      register: editor_shell_nginx_t
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert nginx -t passes
+      ansible.builtin.assert:
+        that:
+          - editor_shell_nginx_t.rc == 0
+        fail_msg: "nginx -t exited {{ editor_shell_nginx_t.rc }}: {{ editor_shell_nginx_t.stderr }}"
+
+    - name: Stat the shell's index on disk
+      ansible.builtin.stat:
+        path: "{{ editor_shell_root }}/index.html"
+      register: editor_shell_index_stat
+
+    - name: Assert the shell's index is on disk
+      ansible.builtin.assert:
+        that:
+          - editor_shell_index_stat.stat.exists
+        fail_msg: "{{ editor_shell_root }}/index.html does not exist — the shell was never shipped"
+
+    - name: Request the edit vhost by Host header
+      ansible.builtin.uri:
+        url: http://127.0.0.1/
+        headers:
+          Host: "{{ editor_shell_domain }}"
+        follow_redirects: none
+        return_content: true
+      register: editor_shell_request
+      failed_when: false
+
+    - name: Assert the request returned 200, not the site's 301
+      ansible.builtin.assert:
+        that:
+          - editor_shell_request.status == 200
+        fail_msg: >-
+          Host: {{ editor_shell_domain }} returned {{ editor_shell_request.status }} instead of
+          200 — a 301 here means this request is falling through to the site vhost's redirect
+          rather than being served by the edit vhost, which is exactly the failure this task
+          exists to catch.
+
+    - name: Assert the body is the shell, by its own root element id
+      ansible.builtin.assert:
+        that:
+          - "'id=\"jamground-shell\"' in editor_shell_request.content"
+        fail_msg: >-
+          Host: {{ editor_shell_domain }} returned 200 but the body does not contain
+          id="jamground-shell" — this is not the editor shell.

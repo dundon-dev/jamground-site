@@ -1,0 +1,68 @@
+---
+# Three things a converge alone does not prove: the unit is actually running (a template drop
+# with no reload is not "done"), the rendered config still passes its own syntax test, and /
+# actually redirects the way the routing table requires — not merely "the file on disk says so".
+#
+# The Host header below is `jamground_domain` from group_vars/all.yml — inventory data loaded
+# for this play before its first task, not a role default this play would have to converge to
+# read. A verify holding its own copy of the domain keeps asserting about whatever name it was
+# written with, which is the one way this play could pass while the site was dark.
+- name: Verify nginx serves the / redirect
+  hosts: jamground
+  gather_facts: false
+  tasks:
+    - name: Check nginx configuration syntax
+      ansible.builtin.command: nginx -t
+      register: nginx_test
+      check_mode: false
+      changed_when: false
+      failed_when: nginx_test.rc != 0
+
+    - name: Query nginx unit state
+      ansible.builtin.command: systemctl is-active nginx
+      register: nginx_active
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the nginx unit is active
+      ansible.builtin.assert:
+        that:
+          - nginx_active.stdout == 'active'
+        fail_msg: "nginx is not active: {{ nginx_active.stdout }}"
+
+    - name: Request / with no redirects followed
+      ansible.builtin.uri:
+        url: http://127.0.0.1/
+        headers:
+          Host: "{{ jamground_domain }}"
+        follow_redirects: none
+        status_code: 301
+      register: root_request
+
+    - name: Assert / redirects to /en-us/
+      ansible.builtin.assert:
+        that:
+          - root_request.location is defined
+          - root_request.location is search('/en-us/$')
+        fail_msg: >-
+          / did not redirect to /en-us/:
+          {{ root_request.location | default('no Location header') }}
+
+    # The redirect above proves nothing about the target: a 301 to a path that then 404s is
+    # still a 301. These two are the pair worth curling — the default
+    # locale's index page, and a real post, so a placeholder page cannot pass this by serving
+    # an empty /en-us/ with no content behind it.
+    - name: Request /en-us/ and require it serves
+      ansible.builtin.uri:
+        url: http://127.0.0.1/en-us/
+        headers:
+          Host: "{{ jamground_domain }}"
+        status_code: 200
+
+    - name: Request /en-us/blog/launch/ and require it serves
+      ansible.builtin.uri:
+        url: http://127.0.0.1/en-us/blog/launch/
+        headers:
+          Host: "{{ jamground_domain }}"
+        status_code: 200

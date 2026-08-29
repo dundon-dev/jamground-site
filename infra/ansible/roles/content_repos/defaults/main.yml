@@ -1,0 +1,26 @@
+---
+# Site code and content live in two separate repositories, pulled by the box rather than
+# pushed by GitHub. Every value below exists in pairs, and this role's whole point is that the
+# two halves of each pair never cross: the site checkout and its deploy key are for
+# jamground-site alone, the content checkout and its deploy key are for jamground-content alone.
+content_repos_org: "{{ jamground_github_org }}"
+content_repos_site_repo: "{{ jamground_site_repo }}"
+content_repos_content_repo: "{{ jamground_content_repo }}"
+
+content_repos_root: /srv/jamground/repos
+content_repos_site_checkout: "{{ content_repos_root }}/site"
+content_repos_content_checkout: "{{ content_repos_root }}/content"
+
+# One keypair per repository — not one keypair registered twice — so a compromise of either
+# private key exposes exactly the one repository it was cut for, never both.
+content_repos_keys_dir: /etc/jamground/deploy-keys
+content_repos_site_key: "{{ content_repos_keys_dir }}/site_ed25519"
+content_repos_content_key: "{{ content_repos_keys_dir }}/content_ed25519"
+
+# roles/deploy's own paths, repeated rather than imported — the same reasoning verify/deploy.yml
+# already gives for repeating deploy_root: a role must not depend on a sibling role's variable
+# names staying stable. Used to compare the current release's manifest against what HEAD is on
+# disk right now, which is what gates this role's deploy — a fact re-checked every
+# converge, never a one-shot latch.
+content_repos_deploy_current: /srv/jamground/current
+content_repos_deploy_script: /usr/local/bin/jamground-deploy

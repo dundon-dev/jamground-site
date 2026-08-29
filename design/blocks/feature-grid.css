@@ -1,0 +1,51 @@
+/* jamground/featureGrid. The column count is driven off the ATTRIBUTE the component emits —
+ * data-columns="2|3|4" — not a class, because the markup is frozen by
+ * test/blocks/custom.test.mjs and the attribute is the contract. Mobile-first: one column,
+ * then two, then whatever the content asked for. */
+.jp-feature-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--jp-space-5);
+  width: 100%;
+  max-width: var(--jp-container);
+  margin-inline: auto;
+  padding: var(--jp-space-8) var(--jp-gutter);
+}
+@media (min-width: 40rem) {
+  .jp-feature-grid[data-columns="2"],
+  .jp-feature-grid[data-columns="3"],
+  .jp-feature-grid[data-columns="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 64rem) {
+  .jp-feature-grid[data-columns="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .jp-feature-grid[data-columns="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.jp-feature-grid__item {
+  background: var(--jp-color-surface);
+  border: 1px solid var(--jp-color-border);
+  border-radius: var(--jp-radius-lg);
+  padding: var(--jp-space-5);
+}
+.jp-feature-grid__heading {
+  font-size: var(--jp-text-lg);
+  margin-block-end: var(--jp-space-2);
+}
+/* The item's `icon` field (check/code/shield) is NOT rendered: adding one would be a markup
+ * contract change, not something this stylesheet may decide on its own. This decorative
+ * rule needs no data, and is trivially replaced by a real icon if that contract ever
+ * changes. */
+.jp-feature-grid__heading::before {
+  content: "";
+  display: block;
+  width: var(--jp-space-6);
+  height: 3px;
+  background: var(--jp-color-accent);
+  border-radius: var(--jp-radius-pill);
+  margin-block-end: var(--jp-space-4);
+}
+.jp-feature-grid__body {
+  color: var(--jp-color-text-muted);
+  font-size: var(--jp-text-sm);
+  margin: 0;
+}

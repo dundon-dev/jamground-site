@@ -1,0 +1,18 @@
+---
+/* core/quote. Markup observed from core's own save.js (src/quote/save.js):
+ * the inner content is core's InnerBlocks slot, which for this
+ * contract's simplified single-`text` Quote (unlike core, which nests arbitrary blocks) is
+ * exactly one `core/paragraph` — rendered the same way Paragraph.astro renders it, no class.
+ * `citation`, when present, is core's own `<cite>` — no class on that element either; core's
+ * `save.js` adds none. */
+import type { z } from 'zod';
+import type { Block } from '../../contract/blocks.ts';
+
+type Props = Omit<Extract<z.infer<typeof Block>, { type: 'quote' }>, 'type'>;
+
+const { text, citation } = Astro.props as Props;
+---
+<blockquote class="wp-block-quote">
+  <p>{text}</p>
+  {citation && <cite>{citation}</cite>}
+</blockquote>

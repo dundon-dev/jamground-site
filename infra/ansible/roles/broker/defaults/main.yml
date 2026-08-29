@@ -1,0 +1,24 @@
+---
+# The auth broker — the entire server-side surface of the system: a stateless
+# `POST /token` code-for-token exchange, PKCE S256, exact-origin CORS, no database, no
+# session, no cache, no file of its own. Runs under its own unprivileged account rather than
+# jamground-build (roles/users) or the orchestrator account, so the one thing it is trusted to
+# read — the Client secret — is not also readable by every other service on the box.
+broker_app_dir: /opt/jamground/broker
+broker_service_name: jamground-broker
+broker_user: jamground-broker
+broker_port: 8081
+
+# A person registers the OAuth App and places its Client secret on the
+# box by hand. The Client ID is public and carried in git; the secret never is —
+# it lives at broker_secret_file, operator-placed, 0640, beside the
+# bot token, and this role is told only its PATH, never its value, and never templates it.
+broker_client_id: "{{ jamground_oauth_client_id }}"
+broker_secret_file: /etc/jamground/oauth-client.secret
+
+# The shell's own origin — the broker must echo exactly this, never `*`. Built
+# from the inventory-wide `jamground_domain` rather than from roles/editor_shell's own
+# `editor_shell_domain`: trusting a SIBLING ROLE's variable names to stay stable would be
+# fragile, but group_vars/all.yml is not a sibling role — it is inventory data loaded before
+# any role's defaults, by the same rule for every play.
+broker_allowed_origin: "https://edit.{{ jamground_domain }}"

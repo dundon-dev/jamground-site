@@ -1,0 +1,75 @@
+---
+# Issues the one certificate that covers all six hostnames — apex, www, edit, hooks, preview
+# and *.preview — over DNS-01, the only challenge type that can produce a wildcard. The -d
+# arguments are exactly the three infra/RUNBOOK.md §Certificates records as proven end to end:
+# the apex is itself, one wildcard one label under it covers www, edit,
+# hooks AND the bare `preview` label, and a second wildcard covers any pr-<n>.preview host. A
+# wildcard covers exactly one label, so `preview` is covered by the FIRST wildcard, not by its
+# own.
+#
+# --cert-name is the domain itself here — not the shorter name RUNBOOK's proven command used —
+# so the live directory this writes lands at {{ certificates_live_dir }}, which is exactly what
+# roles/nginx's `nginx_cert_dir` (built from the same `nginx_domain`) already looks for.
+#
+# A person provisions the Cloudflare token by hand; fail loudly if it is absent
+# rather than let certbot's own error get lost in the PendingDeprecationWarning wall
+# python3-cloudflare 2.20 emits.
+
+- name: Install certbot and the Cloudflare DNS plugin
+  ansible.builtin.apt:
+    name:
+      - certbot
+      - python3-certbot-dns-cloudflare
+    state: present
+    update_cache: true
+
+- name: Check whether the Cloudflare ACME credentials file exists
+  ansible.builtin.stat:
+    path: "{{ certificates_acme_credentials }}"
+  register: certificates_acme_stat
+
+- name: Fail loudly if the ACME credentials are missing
+  ansible.builtin.assert:
+    that:
+      - certificates_acme_stat.stat.exists
+    fail_msg: >-
+      {{ certificates_acme_credentials }} does not exist. H3 (DEPENDENCIES.md) provisions this by
+      hand; certbot cannot obtain a certificate without it and this role will not create a
+      Cloudflare token itself.
+
+- name: Issue the certificate covering all six names
+  ansible.builtin.command:
+    argv:
+      - certbot
+      - certonly
+      - --cert-name
+      - "{{ certificates_cert_name }}"
+      - -a
+      - dns-cloudflare
+      - --dns-cloudflare-credentials
+      - "{{ certificates_acme_credentials }}"
+      - --dns-cloudflare-propagation-seconds
+      - "{{ certificates_propagation_seconds | string }}"
+      # Non-interactive account registration: no email is on file anywhere in the spec for this
+      # box, and rate limits (5 duplicate certs/week) make this the wrong place to invent one.
+      - --non-interactive
+      - --agree-tos
+      - --register-unsafely-without-email
+      - -d
+      - "{{ certificates_domain }}"
+      - -d
+      - "*.{{ certificates_domain }}"
+      - -d
+      - "*.preview.{{ certificates_domain }}"
+    # Idempotent by construction: `creates:` skips the whole invocation once the lineage already
+    # exists, so a re-converge neither reissues nor touches the Let's Encrypt rate limit.
+    creates: "{{ certificates_live_dir }}/fullchain.pem"
+  register: certificates_issue
+  # `command:` is one of the four modules check mode SKIPS (tools/check-playbooks.mjs), so this
+  # must say what it does explicitly rather than let the module guess. It must NOT be
+  # `certificates_issue.rc == 0`: the module sets `rc: 0` on the `creates:`-matched skip path
+  # too — the task then reports `changed` while the underlying certbot process was never
+  # invoked — so that condition cannot tell a skip from a real run. `is changed` defers to the
+  # module's own determination, which the
+  # `creates:` workaround already makes correct in both normal and check mode.
+  changed_when: certificates_issue is changed

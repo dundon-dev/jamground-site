@@ -1,0 +1,69 @@
+---
+/* Locale index route. Renders the `pages` entity with slug 'home' for
+ * each configured locale. getStaticPaths enumerates Settings.locales; a locale with no home
+ * page simply produces no route. */
+import { getCollection } from 'astro:content';
+import { settings } from '../../content.config';
+import { localeToSegment } from '../../contract/defs';
+import { resolveDraftFlag } from '../../contract/env';
+import BlockList from '../../components/BlockList.astro';
+import { loadLinkIndex } from '../../lib/site-links';
+import { linkContext, resolveBlockLinks } from '../../lib/links';
+import type { ResolvedBlock } from '../../lib/links';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+type Props = {
+  page: Awaited<ReturnType<typeof getCollection<'pages'>>>[number];
+  /* Resolved in getStaticPaths, not here: a broken reference then fails during path
+   * generation, before any HTML exists, rather than part-way through writing a page. */
+  blocks: ResolvedBlock[];
+};
+
+const { page, blocks } = Astro.props as Props;
+
+export async function getStaticPaths() {
+  const pages = await getCollection('pages');
+  const includeDrafts = resolveDraftFlag();
+  const linkIndex = await loadLinkIndex();
+
+  /* Link.ref is a translation-group id, not a URL. Blocks are resolved here so that
+   * what reaches BlockList carries real hrefs and no raw ULID is representable downstream —
+   * see src/lib/links.ts. */
+  const resolve = (entry: { data: { id: string; slug: string; locale: string; status: 'draft' | 'published'; blocks: unknown[] } }) =>
+    resolveBlockLinks(entry.data.blocks as never, linkContext(linkIndex, {
+      collection: 'pages',
+      id: entry.data.id,
+      slug: entry.data.slug,
+      locale: entry.data.locale,
+      status: entry.data.status,
+    }, includeDrafts));
+
+  return settings.locales
+    .flatMap(locale => {
+      // Find the home page for this locale
+      const homePage = pages.find(
+        p => p.data.locale === locale && p.data.slug === 'home',
+      );
+
+      // Exclude drafts from production output entirely
+      if (!homePage || (!includeDrafts && homePage.data.status === 'draft')) {
+        return [];
+      }
+
+      return {
+        params: { locale: localeToSegment(locale) },
+        props: { page: homePage, blocks: resolve(homePage) },
+      };
+    });
+}
+---
+
+<BaseLayout
+  title={page.data.seo?.title ?? page.data.title}
+  description={page.data.seo?.description}
+  locale={page.data.locale}
+>
+  <div class="site-blocks">
+    <BlockList blocks={blocks} />
+  </div>
+</BaseLayout>

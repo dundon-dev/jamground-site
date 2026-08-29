@@ -1,0 +1,45 @@
+---
+/* jamground/hero. A dynamic block: save() returns null in the editor, so this
+ * component is the sole renderer of the markup contract, rather than one half of a fidelity
+ * pair like the core-derived blocks (which must match core's own save() output). Props
+ * follow the Hero member of the Block union — imported by relative .ts path from
+ * ../../contract/blocks.ts, not re-derived here.
+ *
+ * Link.ref (../../contract/defs.ts) targets a translation GROUP id, not a URL. Resolution
+ * happens UPSTREAM, in the route's getStaticPaths, via resolveBlockLinks()
+ * (../../lib/links.ts) — so what arrives here is a ResolvedLink carrying `href`, and `ref`
+ * is not representable.
+ *
+ * Resolution is upstream rather than here for a specific reason: test/blocks/*.test.mjs
+ * compile this file with @astrojs/compiler-rs and render it through astro/container with NO
+ * Vite, hand-rewriting import specifiers in a temp directory that does not mirror src/. Every
+ * runtime import added to this file is another rewrite rule for that harness to maintain, and
+ * another way one edit breaks three test files. This component therefore imports only types,
+ * as it always has, and the guard below needs no import at all. */
+import type { z } from 'zod';
+import type { Block } from '../../contract/blocks.ts';
+import type { ResolvedLink } from '../../lib/links.ts';
+
+type Props = Omit<Extract<z.infer<typeof Block>, { type: 'hero' }>, 'type' | 'cta'> & {
+  cta?: ResolvedLink;
+};
+
+const { heading, body, media, cta } = Astro.props as Props;
+
+/* The control that makes upstream resolution mandatory rather than conventional. A future
+ * route that renders blocks without resolving them fails the build here, loudly, instead of
+ * emitting a bare ULID that every gate in the repo would pass. */
+if (cta && typeof (cta as { href?: unknown }).href !== 'string') {
+  throw new Error(
+    'hero cta reached the renderer unresolved — blocks must go through resolveBlockLinks() (INV-11)',
+  );
+}
+---
+<section class="jp-hero">
+  <h2 class="jp-hero__heading">{heading}</h2>
+  {body && <p class="jp-hero__body">{body}</p>}
+  {media && (
+    <img class="jp-hero__media" src={media.ref} alt={media.decorative ? '' : media.alt} />
+  )}
+  {cta && <a class="jp-hero__cta" href={cta.href}>{cta.label}</a>}
+</section>

@@ -1,0 +1,30 @@
+# One host, and the three facts about it that belong to the OPERATOR rather than to the fork:
+# where the box is, who to connect as, and which private key on this machine opens it. None of
+# the three is the same for two people deploying this repository, so none of the three is
+# written here as a literal. Everything that IS the same for everyone — domain, GitHub org,
+# repository names, the public OAuth client id — is in group_vars/all.yml, in git.
+#
+# THE RECORDED OBJECTION, AND WHY IT DOES NOT APPLY. The lines this file used to open with said
+# the address was "repeated here rather than referenced because a playbook run must not depend
+# on a document being read correctly". That is still right, and it is not what changed. The
+# objection is to depending on a DOCUMENT — infra/RUNBOOK.md, prose a person has to read,
+# interpret and retype without error. An environment variable is not a document: it is read by
+# the machine, exactly, or it is absent. And absence is handled rather than guessed at — the
+# fallback is 203.0.113.10, RFC 5737 TEST-NET-3, which is unroutable by definition. A clone
+# that has configured nothing therefore fails to CONNECT, loudly, on the first task. It does
+# not silently converge somebody else's server, which is precisely what a hardcoded address
+# does the moment this repository has more than one operator.
+#
+# Set them in the environment (see .env.example):
+#   JAMGROUND_VPS_HOST      the box's address
+#   JAMGROUND_VPS_SSH_USER  the account to connect as        (default: root)
+#   JAMGROUND_VPS_SSH_KEY   the private key on THIS machine  (default: ~/.ssh/id_ed25519)
+all:
+  children:
+    jamground:
+      hosts:
+        vps:
+          ansible_host: "{{ lookup('env', 'JAMGROUND_VPS_HOST') | default('203.0.113.10', true) }}"
+          ansible_user: "{{ lookup('env', 'JAMGROUND_VPS_SSH_USER') | default('root', true) }}"
+          ansible_ssh_private_key_file: "{{ lookup('env', 'JAMGROUND_VPS_SSH_KEY') | default('~/.ssh/id_ed25519', true) }}"
+          ansible_python_interpreter: /usr/bin/python3

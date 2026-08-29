@@ -1,0 +1,40 @@
+---
+/* Post bodies render through the SAME block components as pages — never Astro's own
+ * markdown pipeline. Astro's markdown image handling resolves a relative path from the
+ * entry file's own directory (`content/posts/<locale>/`), which is the wrong root: media
+ * references are rooted at `content/`, always. So this component never calls into Astro's
+ * markdown rendering at all — it parses the raw body itself with the same remark stack the
+ * contract's own `InlineText` check is built on (`../contract/defs.ts`), maps the result to
+ * the contract's own Block shapes, and hands the array to BlockList — one renderer, not two,
+ * so the same markup contract that governs page blocks holds for prose too, with no
+ * separate fixtures needed.
+ *
+ * Only the eight constructs our markdown subset actually produces have a mapping here:
+ * heading, paragraph (or image, when a paragraph is exactly one bare image, e.g.
+ * `![alt](media/name.jpg)`), list (three explicit levels, matching blocks.ts's own
+ * List/ListL2/ListL3 — the cap is BY CONSTRUCTION, since a mapped fourth level has no `list`
+ * field to occupy, mirroring how blocks.ts itself enforces the same cap), blockquote ->
+ * quote, a fenced code block, a table, and a thematic break -> separator. The three custom
+ * jamground/* types have no markdown construct and so never appear here. Content-level
+ * validation — raw HTML, h1/h5–h6, fence info strings, an empty prose alt — is not this
+ * renderer's job: a body reaching this component is assumed already validated, and an
+ * unrecognised construct throws rather than silently dropping content.
+ *
+ * The canonical markdown settings below match the ones defs.ts uses for InlineText
+ * (`bullet`, `emphasis`, `strong`, `fences`, `listItemIndent`, `rule`, `ruleSpaces` govern
+ * InlineText scalars as well as markdown bodies), plus `resourceLink: true`, which
+ * `defs.ts`'s own InlineText stringifier sets for the same reason: without it, a link whose
+ * label equals its href round-trips through the autolink shorthand, which InlineText's
+ * canonical-form check rejects by name. `defs.ts` builds the identical pipeline for that
+ * check; it exports no stringify function of its own to reuse here (its concern is the
+ * check, not a render-time serialiser), so the same settings are applied again rather than
+ * imported. */
+import { mdastToBlocks } from '../lib/mdast-to-blocks.ts';
+import BlockList from './BlockList.astro';
+
+type Props = { body: string };
+const { body } = Astro.props as Props;
+
+const blocks = mdastToBlocks(body);
+---
+<BlockList blocks={blocks} />

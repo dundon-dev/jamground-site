@@ -1,0 +1,92 @@
+---
+/* Tag archive route. Tags are not entities; Post.tags is a list of slugs.
+ * The route enumerates the union of published posts' tags in that locale and displays the slug.
+ * A tag has no title and no translation group. Posts are sorted by publishedAt descending.
+ * getStaticPaths enumerates Settings.locales; a locale with no posts having this tag produces
+ * no route. Drafts are absent from production output entirely. */
+import { getCollection } from 'astro:content';
+import { settings } from '../../../content.config';
+import { localeToSegment } from '../../../contract/defs';
+import { resolveDraftFlag } from '../../../contract/env';
+import { pathForPost } from '../../../lib/links';
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+
+type Props = {
+  tag: string;
+  posts: Awaited<ReturnType<typeof getCollection<'posts'>>>;
+};
+
+const { tag, posts } = Astro.props as Props;
+
+export async function getStaticPaths() {
+  const allPosts = await getCollection('posts');
+  const includeDrafts = resolveDraftFlag();
+
+  return settings.locales
+    .flatMap(locale => {
+      // Get all posts for this locale
+      const postList = allPosts.filter(p => p.data.locale === locale);
+
+      // Exclude drafts from production output entirely
+      const filtered = postList.filter(
+        p => includeDrafts || p.data.status !== 'draft',
+      );
+
+      // Collect all unique tags from posts in this locale
+      const tagSet = new Set<string>();
+      filtered.forEach(p => {
+        if (p.data.tags) {
+          p.data.tags.forEach(t => tagSet.add(t));
+        }
+      });
+
+      // Create a route for each unique tag
+      return Array.from(tagSet).map(tagSlug => {
+        // Find all posts with this tag
+        const postsWithTag = filtered.filter(
+          p => p.data.tags && p.data.tags.includes(tagSlug),
+        );
+
+        // Sort by publishedAt DESC, ties broken by id DESC
+        postsWithTag.sort((a, b) => {
+          const dateCompare = new Date(b.data.publishedAt).getTime() - new Date(a.data.publishedAt).getTime();
+          if (dateCompare !== 0) return dateCompare;
+          return b.id.localeCompare(a.id);
+        });
+
+        return {
+          params: { locale: localeToSegment(locale), tag: tagSlug },
+          props: { tag: tagSlug, posts: postsWithTag },
+        };
+      });
+    });
+}
+
+/* The locale argument is not optional: toLocaleDateString() without one reads the host's
+ * default ICU locale, so the same content would emit different bytes on a developer's
+ * machine and in CI, and reproducibility.test.mjs compares sha256 per file. */
+const formatDate = (iso: string, locale: string) =>
+  new Date(iso).toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
+
+---
+
+<BaseLayout title={`Posts tagged: ${tag}`} locale={posts[0].data.locale}>
+  <header class="site-page-header site-container">
+    <h1 class="site-page-title">Posts tagged <span class="site-tag">{tag}</span></h1>
+  </header>
+  <ul class="site-post-list site-container">
+    {posts.map(post => (
+      <li class="site-post-list__item">
+        <h2 class="site-post-list__title">
+          <a href={pathForPost(post.data.locale, post.data.slug)}>{post.data.title}</a>
+        </h2>
+        {post.data.publishedAt && (
+          <p class="site-post-meta">
+            <time datetime={post.data.publishedAt}>{formatDate(post.data.publishedAt, post.data.locale)}</time>
+          </p>
+        )}
+        {post.data.excerpt && <p class="site-post-excerpt">{post.data.excerpt}</p>}
+      </li>
+    ))}
+  </ul>
+</BaseLayout>

@@ -1,0 +1,23 @@
+# LF everywhere. The canonical writer's byte-identical round trip (src/lib/canonical.ts)
+# does not survive CRLF, and a contributor with a misconfigured core.autocrlf or an edit
+# made through the GitHub web UI could otherwise introduce one.
+#
+# This file is a convenience: it normalises line endings on checkout, but does not itself
+# reject a stray \r, a BOM, trailing whitespace or a missing final newline should one
+# already be committed.
+* text=auto eol=lf
+
+*.yaml   text eol=lf
+*.yml    text eol=lf
+*.md     text eol=lf
+*.mjs    text eol=lf
+*.js     text eol=lf
+*.ts     text eol=lf
+*.json   text eol=lf
+*.svg    text eol=lf
+
+content/media/*.jpg  binary
+content/media/*.png  binary
+content/media/*.webp binary
+content/media/*.avif binary
+content/media/*.gif  binary

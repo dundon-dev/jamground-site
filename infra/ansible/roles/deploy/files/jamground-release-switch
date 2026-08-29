@@ -1,0 +1,62 @@
+#!/bin/bash
+# jamground-release-switch — the one privileged half of a deploy: the atomic rename this
+# mechanism requires. Root-owned, invoked by `jamground` via the no-argument sudo entry
+# roles/users grants — no arguments accepted anywhere, so there is no path or option to
+# inject. The caller (jamground-deploy, running unprivileged) stages what to flip TO by
+# pointing /srv/jamground/.current.tmp at a release directory beforehand; this script never
+# chooses the target itself, only validates and performs the rename.
+#
+# `mv -T` is the atomic rename(2) this needs. `ln -sfn` is not — it unlinks then
+# symlinks, and a request landing between the two gets nothing.
+set -euo pipefail
+
+root=/srv/jamground
+staged="$root/.current.tmp"
+retain=5
+
+if [ ! -L "$staged" ]; then
+  echo "jamground-release-switch: $staged is not a symlink; nothing staged to flip to" >&2
+  exit 1
+fi
+
+target=$(readlink -f "$staged")
+case "$target" in
+  "$root"/releases/*) ;;
+  *)
+    echo "jamground-release-switch: staged target $target is outside $root/releases; refusing" >&2
+    exit 1
+    ;;
+esac
+
+if [ ! -e "$target" ]; then
+  echo "jamground-release-switch: staged target $target does not exist; refusing" >&2
+  exit 1
+fi
+
+# `previous` is written before the flip and need not itself be atomic — nothing serves it live.
+if [ -L "$root/current" ]; then
+  ln -sfn "$(readlink "$root/current")" "$root/previous"
+fi
+
+mv -T "$staged" "$root/current"
+
+# Retention: the last 5 releases, plus whatever current and previous point at, by count —
+# never by age, which could delete the only rollback target during a quiet week.
+mapfile -t all_releases < <(find "$root/releases" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+mapfile -t keep < <(printf '%s\n' "${all_releases[@]}" | tail -n "$retain")
+keep+=("$(basename "$(readlink "$root/current")")")
+if [ -L "$root/previous" ]; then
+  keep+=("$(basename "$(readlink "$root/previous")")")
+fi
+for dir in "${all_releases[@]}"; do
+  found=0
+  for k in "${keep[@]}"; do
+    if [ "$dir" = "$k" ]; then
+      found=1
+      break
+    fi
+  done
+  if [ "$found" -eq 0 ]; then
+    rm -rf --one-file-system -- "$root/releases/$dir"
+  fi
+done

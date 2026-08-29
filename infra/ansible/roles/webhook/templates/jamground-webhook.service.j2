@@ -1,0 +1,32 @@
+# {{ ansible_managed }}
+#
+# Runs as jamground-build — the same unprivileged account that runs the deploy build —
+# holding no secret beyond the HMAC secret file this process verifies incoming
+# deliveries against (`infra/hooks/lib/hmac.mjs`). ProtectSystem=strict plus one explicit
+# ReadWritePaths is what keeps a network-facing process from writing anywhere the release
+# directories live; it needs no write access at all outside its own queue/marker/lock state.
+
+[Unit]
+Description=jamground webhook receiver
+After=network.target
+
+[Service]
+Type=simple
+User=jamground-build
+Group=jamground-build
+Environment=WEBHOOK_SECRET_FILE={{ webhook_secret_file }}
+Environment=WEBHOOK_QUEUE_DIR={{ webhook_queue_dir }}
+Environment=WEBHOOK_MARKERS_DIR={{ webhook_markers_dir }}
+Environment=WEBHOOK_LOCKS_DIR={{ webhook_locks_dir }}
+Environment=WEBHOOK_PORT={{ webhook_port }}
+ExecStart=/usr/local/bin/node {{ webhook_app_dir }}/server.mjs
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths={{ webhook_state_dir }}
+
+[Install]
+WantedBy=multi-user.target

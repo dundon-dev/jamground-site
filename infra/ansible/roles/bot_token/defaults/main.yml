@@ -1,0 +1,6 @@
+---
+# The GitHub bot token is initially dropped at bot_token_source by a person,
+# which mints a fine-grained PAT and places it on the box. This role secures it by copying
+# to bot_token_dest in the jamground group and deleting the world-readable original.
+bot_token_source: /root/jamground.pat
+bot_token_dest: /etc/jamground/github-bot.token

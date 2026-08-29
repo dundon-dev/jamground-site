@@ -1,0 +1,33 @@
+---
+# Primary playbook for jamground converge. Later tasks append to the empty roles list.
+- name: Configure jamground
+  hosts: jamground
+  gather_facts: true
+  roles:
+    - users
+    - bot_token
+    - toolchain
+    - nginx
+    - certificates
+    # The auth broker — a stateless systemd unit answering `POST /token` on
+    # localhost. Converges before editor_shell: its edit.conf.j2 proxies the public path to
+    # broker_port, and a role's defaults must already be loaded when that template renders.
+    - broker
+    # A conf.d drop-in for the edit vhost — converges after both: it reuses the
+    # wildcard certificate roles/certificates issues and relies on nginx.conf's
+    # `include conf.d/*.conf`, which roles/nginx already ships.
+    - editor_shell
+    # No dependency on deploy/content_repos — the webhook receiver is an independent process
+    # that only needs the build account (users) and node (toolchain), both already converged.
+    - webhook
+    - deploy
+    # Depends on `deploy` having already shipped jamground-deploy and the seed release — this
+    # role performs the first real pull, build and flip through that mechanism.
+    - content_repos
+    # No dependency on any role above — only needs the build account (users) already converged.
+    # Ships live and unused, the same shape webhook's receiver ships in: the per-build
+    # units carry no ExecStart that anything invokes yet.
+    - isolation
+    # Converges LAST: its checks are live, against whatever the box is actually
+    # serving, so nginx, certificates, webhook and content_repos must already have run.
+    - selfcheck

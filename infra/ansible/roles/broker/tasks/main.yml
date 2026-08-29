@@ -1,0 +1,104 @@
+---
+# Ships infra/broker/broker.mjs as a systemd unit answering `POST /token` on
+# localhost; roles/editor_shell's edit.conf.j2 proxies the public path to it. The unit's own
+# entrypoint is generated here rather than promoted from a repository file, because broker.mjs
+# only exports `createBroker` — the factory its own tests exercise directly — and never
+# calls `listen()` itself; something has to start it, and that something must never see the
+# Client secret's value, only its path.
+#
+# No handler/restart-on-notify here: this role has no handlers/main.yml, so a changed unit or
+# entrypoint is restarted by the explicit task below instead of a notify that nothing would
+# ever define.
+
+- name: Create the broker's own unprivileged service account
+  ansible.builtin.user:
+    name: "{{ broker_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    password_lock: true
+    # Secondary membership only — never the primary group, and never the jamground account
+    # itself — so the broker can read the operator-placed Client secret (root:jamground, 0640)
+    # without becoming the orchestrator account roles/users already scoped tightly on purpose.
+    groups: jamground
+    append: true
+    state: present
+
+- name: Ensure the broker application directory exists
+  ansible.builtin.file:
+    path: "{{ broker_app_dir }}"
+    state: directory
+    owner: "{{ broker_user }}"
+    group: "{{ broker_user }}"
+    mode: '0750'
+
+- name: Ship infra/broker/broker.mjs — the stateless createBroker factory
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../broker/broker.mjs"
+    dest: "{{ broker_app_dir }}/broker.mjs"
+    owner: "{{ broker_user }}"
+    group: "{{ broker_user }}"
+    mode: '0640'
+  register: broker_code_copy
+
+- name: Install the broker's entrypoint — told the secret's PATH, never its value
+  ansible.builtin.copy:
+    dest: "{{ broker_app_dir }}/run.mjs"
+    owner: "{{ broker_user }}"
+    group: "{{ broker_user }}"
+    mode: '0640'
+    content: |
+      // Managed by infra/ansible/roles/broker — do not edit on the box; a converge overwrites it.
+      //
+      // Starts createBroker (see broker.mjs). Reads the Client secret's VALUE from disk
+      // once, at start, from the path the unit's environment names — the value never passes
+      // through this playbook, this role's variables, or git. Binds to loopback only:
+      // the only path in is roles/editor_shell's proxy on the edit vhost.
+      import { createBroker } from './broker.mjs';
+      import { readFileSync } from 'node:fs';
+
+      const clientSecret = readFileSync(process.env.OAUTH_CLIENT_SECRET_FILE, 'utf8').trim();
+      const broker = createBroker({
+        clientId: process.env.OAUTH_CLIENT_ID,
+        clientSecret,
+        allowedOrigin: process.env.SHELL_ORIGIN,
+      });
+      broker.listen(Number(process.env.PORT), '127.0.0.1');
+  register: broker_entrypoint_copy
+
+- name: Check whether the operator has placed the Client secret yet
+  ansible.builtin.stat:
+    path: "{{ broker_secret_file }}"
+  register: broker_secret_stat
+
+- name: Fail with a clear message if the Client secret has not been placed yet
+  ansible.builtin.fail:
+    msg: >-
+      {{ broker_secret_file }} does not exist. Placing it there is an operator's manual task —
+      this role only reads its path and must never create or template it.
+  when: not broker_secret_stat.stat.exists
+
+- name: Install the broker systemd unit
+  ansible.builtin.template:
+    src: jamground-broker.service.j2
+    dest: "/etc/systemd/system/{{ broker_service_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  register: broker_unit_template
+
+- name: Restart the broker when its code, entrypoint or unit definition changed
+  ansible.builtin.systemd:
+    name: "{{ broker_service_name }}"
+    daemon_reload: true
+    state: restarted
+  when: >-
+    broker_code_copy is changed or broker_entrypoint_copy is changed
+    or broker_unit_template is changed
+
+- name: Ensure the broker service is enabled and running
+  ansible.builtin.systemd:
+    name: "{{ broker_service_name }}"
+    daemon_reload: true
+    state: started
+    enabled: true

@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+#
+# Capped so a preview build, or several at once, can never take the memory a production deploy
+# needs. Two concurrent preview builds at ~1.2 GB each while sharp runs is
+# the figure {{ isolation_preview_slice_memory_max }} is sized against, with headroom above it.
+[Unit]
+Description=jamground preview build work — capped, below production
+
+[Slice]
+CPUWeight={{ isolation_preview_cpu_weight }}
+MemoryMax={{ isolation_preview_slice_memory_max }}

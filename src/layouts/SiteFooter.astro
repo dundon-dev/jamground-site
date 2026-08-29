@@ -1,0 +1,25 @@
+---
+/* Settings.siteName and Settings.social put to work — both were validated at config load and
+ * then never reached the markup. `social` is optional and absent from the seed site.yaml, so
+ * the list renders nothing today.
+ *
+ * The editorial-vocabulary gate scans only editor/, so the site is out of its scope. The
+ * no-git-vocabulary rule is honoured here anyway: there is no upside to a footer string a
+ * later, wider gate would flag, and the words would add nothing. */
+import { settings } from '../content.config';
+
+const social = settings.social as Record<string, string> | undefined;
+const entries = social ? Object.entries(social) : [];
+---
+<footer class="site-footer">
+  <div class="site-footer__inner site-container">
+    <p class="site-footer__meta">{settings.siteName}</p>
+    {entries.length > 0 && (
+      <ul class="site-footer__social">
+        {entries.map(([name, url]) => (
+          <li><a class="site-footer__link" href={url} rel="noopener noreferrer">{name}</a></li>
+        ))}
+      </ul>
+    )}
+  </div>
+</footer>

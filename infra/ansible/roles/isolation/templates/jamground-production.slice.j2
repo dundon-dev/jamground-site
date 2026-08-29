@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+#
+# Favoured over jamground-preview.slice: a higher
+# CPUWeight and no slice-wide memory cap, because the one thing this box cannot survive is a
+# preview build starving the production deploy that must always be able to proceed.
+[Unit]
+Description=jamground production build work — favoured over preview
+
+[Slice]
+CPUWeight={{ isolation_production_cpu_weight }}

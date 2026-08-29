@@ -1,0 +1,30 @@
+---
+/* Per-locale 404 page. One route for each configured locale, plus a
+ * default-locale fallback at /404.html. getStaticPaths enumerates Settings.locales so every
+ * locale has a 404 page. */
+import { settings } from '../../content.config';
+import { localeToSegment } from '../../contract/defs';
+import { pathForHome } from '../../lib/links';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+type Props = {
+  locale: string;
+};
+
+const { locale } = Astro.props as Props;
+
+export async function getStaticPaths() {
+  return settings.locales.map(locale => ({
+    params: { locale: localeToSegment(locale) },
+    props: { locale },
+  }));
+}
+---
+
+<BaseLayout title="Page not found" locale={locale} bodyClass="is-error">
+  <div class="site-error site-container">
+    <h1>Page not found</h1>
+    <p>The page you are looking for could not be found.</p>
+    <a class="site-button" href={pathForHome(locale)}>Return to home</a>
+  </div>
+</BaseLayout>

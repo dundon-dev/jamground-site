@@ -1,0 +1,57 @@
+---
+/* The general block renderer. Both bodies the contract has go through
+ * this single component: a page's `blocks: z.array(Block)` renders it directly, and
+ * a post's markdown body renders it too, via PostBody.astro mapping the prose into the same
+ * Block shapes first. One renderer, not two — the rationale is on PostBody.astro, which is
+ * the component that actually needs it.
+ *
+ * Blocks arriving here are already RESOLVED (../lib/links.ts): the route's getStaticPaths
+ * runs resolveBlockLinks(), so hero.cta and cta.link carry `href` and no raw translation
+ * group id survives. That happens upstream rather than in this component because PostBody
+ * also renders through here, and the markdown path can provably never produce a hero or a
+ * cta (mdastToBlocks maps eight types, none of them link-bearing) — threading a link index
+ * through it would mean carrying data down a path that cannot use it, and adding a runtime
+ * import to a file the no-Vite block harness compiles. Hero.astro and Cta.astro throw if
+ * they are ever handed an unresolved link.
+ *
+ * All eleven members import their component from its own file (the three custom
+ * jamground/* types and the eight core-derived types) — this file only dispatches, it does
+ * not build them. The lookup table is keyed by the Block union's own discriminant (`type`),
+ * so a twelfth member added to blocks.ts with no matching entry here throws at render time
+ * rather than silently rendering nothing. */
+import type { ResolvedBlock } from '../lib/links.ts';
+import Paragraph from './blocks/Paragraph.astro';
+import Heading from './blocks/Heading.astro';
+import List from './blocks/List.astro';
+import Image from './blocks/Image.astro';
+import Quote from './blocks/Quote.astro';
+import Code from './blocks/Code.astro';
+import Table from './blocks/Table.astro';
+import Separator from './blocks/Separator.astro';
+import Hero from './blocks/Hero.astro';
+import FeatureGrid from './blocks/FeatureGrid.astro';
+import Cta from './blocks/Cta.astro';
+
+type Props = { blocks: ResolvedBlock[] };
+const { blocks } = Astro.props as Props;
+
+const RENDERERS = {
+  paragraph: Paragraph,
+  heading: Heading,
+  list: List,
+  image: Image,
+  quote: Quote,
+  code: Code,
+  table: Table,
+  separator: Separator,
+  hero: Hero,
+  featureGrid: FeatureGrid,
+  cta: Cta,
+} as const;
+---
+{blocks.map((block) => {
+  const { type, ...props } = block;
+  const Renderer = RENDERERS[type];
+  if (!Renderer) throw new Error(`no renderer registered for block type "${type}"`);
+  return <Renderer {...props} />;
+})}

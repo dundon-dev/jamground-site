@@ -1,0 +1,98 @@
+---
+# Every deploy is a fresh release directory; going live is one atomic rename(2). This
+# role converges the directory tree, ships the mechanism — jamground-deploy and the two
+# no-argument root wrappers roles/users already grants jamground sudo on — and seeds ONE empty
+# release so /srv/jamground/current is never a dangling symlink. nginx resolves it per request
+# (roles/nginx's nginx_release_root points at this same path), and a dangling root is a 500 on
+# every request until the first real build.
+
+- name: Ensure the release root exists
+  ansible.builtin.file:
+    path: "{{ deploy_root }}"
+    state: directory
+    owner: jamground-build
+    group: jamground-build
+    mode: '0755'
+
+- name: Ensure the releases directory exists
+  ansible.builtin.file:
+    path: "{{ deploy_releases_dir }}"
+    state: directory
+    owner: jamground-build
+    group: jamground-build
+    mode: '0755'
+
+- name: Ship the deploy script — build, verify, create the release, flip
+  ansible.builtin.copy:
+    src: jamground-deploy
+    dest: "{{ deploy_script_path }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Ship the release-switch wrapper — the one privileged half of a deploy, no arguments
+  ansible.builtin.copy:
+    src: jamground-release-switch
+    dest: "{{ jamground_release_switch }}"
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Ship the reload-nginx wrapper — the other privileged half of a deploy, no arguments
+  ansible.builtin.copy:
+    src: jamground-reload-nginx
+    dest: "{{ jamground_reload_nginx }}"
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Check whether current already points somewhere
+  ansible.builtin.stat:
+    path: "{{ deploy_current }}"
+  register: deploy_current_stat
+
+# Only ever runs once: subsequent converges see current already resolved and skip the whole
+# block, which is what makes this idempotent rather than re-seeding over a real release.
+- name: Seed one empty release so current is never dangling
+  when: not deploy_current_stat.stat.exists
+  block:
+    - name: Create the seed release's public directory
+      ansible.builtin.file:
+        path: "{{ deploy_releases_dir }}/{{ deploy_seed_release }}/public"
+        state: directory
+        owner: jamground-build
+        group: jamground-build
+        mode: '0755'
+
+    - name: Write a placeholder index so the seed release is servable
+      ansible.builtin.copy:
+        dest: "{{ deploy_releases_dir }}/{{ deploy_seed_release }}/public/index.html"
+        owner: jamground-build
+        group: jamground-build
+        mode: '0644'
+        content: |
+          <!doctype html>
+          <title>jamground</title>
+          <p>Awaiting the first build.</p>
+
+    - name: Write a release manifest that parses
+      ansible.builtin.copy:
+        dest: "{{ deploy_releases_dir }}/{{ deploy_seed_release }}/manifest.json"
+        owner: jamground-build
+        group: jamground-build
+        mode: '0644'
+        content: >-
+          {{ {'release': deploy_seed_release, 'contentSha': 'seed', 'siteSha': 'seed',
+          'builtAt': '1970-01-01T00:00:00Z'} | to_nice_json }}
+
+    - name: Stage the seed release for the flip
+      ansible.builtin.file:
+        src: "releases/{{ deploy_seed_release }}"
+        dest: "{{ deploy_root }}/.current.tmp"
+        state: link
+        force: true
+
+    - name: mv -T the staged symlink into place — rename(2), never unlink-then-link
+      ansible.builtin.command:
+        argv: [mv, -T, "{{ deploy_root }}/.current.tmp", "{{ deploy_current }}"]
+      changed_when: true

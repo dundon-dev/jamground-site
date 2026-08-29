@@ -1,0 +1,86 @@
+#!/bin/bash
+# jamground-deploy — build, verify, create a fresh release
+# directory, and flip `current` to it ONLY if the build exited 0, the default locale's
+# index page exists and the release manifest parses. A failed build never
+# becomes current.
+#
+# This is the deliverable that used to be infra/deploy.sh: Ansible ships
+# it to the box and runs it there, rather than owning its logic, because a deploy must be
+# runnable by the webhook with no control node in the loop.
+#
+# Requires JAMGROUND_SITE_REPO and JAMGROUND_CONTENT_REPO in the environment — paths to the two
+# already-pulled repository checkouts. Where those checkouts live, and keeping them pulled, is
+# content_repos' job; this script only builds what is already on disk and
+# flips.
+#
+# JAMGROUND_CONTENT_DIR is how the build itself finds content/ — it names the content
+# repository's ROOT, the same directory JAMGROUND_CONTENT_REPO already names, so this script
+# exports one as the other rather than leaving it unset and falling back to a sibling directory
+# that does not exist on this box. The resolved absolute path is recorded in the release manifest
+# so a build that read the wrong tree is not indistinguishable from one that read the right one.
+#
+# The build itself is expected to run as jamground-build (unprivileged, no
+# secrets); the flip needs the two no-argument sudo wrappers only `jamground` holds. `sudo -n`
+# degrades cleanly: root can call the wrappers directly, jamground reaches them via the grant,
+# and anything else fails loudly rather than hanging on a password prompt.
+set -euo pipefail
+
+root=/srv/jamground
+releases="$root/releases"
+release_switch=/usr/local/sbin/jamground-release-switch
+reload_nginx=/usr/local/sbin/jamground-reload-nginx
+
+: "${JAMGROUND_SITE_REPO:?JAMGROUND_SITE_REPO must name the site repository checkout}"
+: "${JAMGROUND_CONTENT_REPO:?JAMGROUND_CONTENT_REPO must name the content repository checkout}"
+
+content_sha=$(git -C "$JAMGROUND_CONTENT_REPO" rev-parse --short=7 HEAD)
+site_sha=$(git -C "$JAMGROUND_SITE_REPO" rev-parse --short=7 HEAD)
+utc=$(date -u +%Y%m%dT%H%M%SZ)
+release="${utc}-${content_sha}-${site_sha}"
+release_dir="$releases/$release"
+
+fail() {
+  echo "jamground-deploy: $1" >&2
+  rm -rf -- "$release_dir"
+  exit 1
+}
+
+echo "jamground-deploy: building $release"
+mkdir -p "$release_dir"
+
+content_dir=$(readlink -f "$JAMGROUND_CONTENT_REPO")
+export JAMGROUND_CONTENT_DIR="$content_dir"
+
+if ! ( cd "$JAMGROUND_SITE_REPO" && npm ci && npm run build ); then
+  fail "the build exited non-zero; current is unchanged"
+fi
+
+[ -d "$JAMGROUND_SITE_REPO/dist" ] || fail "$JAMGROUND_SITE_REPO/dist does not exist after a build that exited 0"
+
+cp -a "$JAMGROUND_SITE_REPO/dist" "$release_dir/public"
+
+# from Settings.defaultLocale — this site never emits a bare-root
+# public/index.html, only the default locale's, the same path
+# roles/nginx/templates/nginx.conf.j2 already redirects / to.
+[ -f "$release_dir/public/en-us/index.html" ] || fail "$release_dir/public/en-us/index.html does not exist; a deploy never flips without it"
+
+manifest="$release_dir/manifest.json"
+cat > "$manifest" <<JSON
+{"release":"$release","contentSha":"$content_sha","siteSha":"$site_sha","contentDir":"$content_dir","builtAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+JSON
+
+node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$manifest" \
+  || fail "$manifest does not parse; a deploy never flips without a parseable manifest"
+
+echo "jamground-deploy: flipping current to $release"
+ln -sfn "releases/$release" "$root/.current.tmp"
+
+if [ "$(id -u)" -eq 0 ]; then
+  "$release_switch"
+  "$reload_nginx"
+else
+  sudo -n "$release_switch"
+  sudo -n "$reload_nginx"
+fi
+
+echo "jamground-deploy: $release is current"

@@ -1,0 +1,89 @@
+---
+/* The primary navigation, rendered from the `navigation` collection. Class prefix is
+ * `site-`, not `jp-`: jp-* is reserved for markup contracts binding on TWO renderers, and
+ * chrome is site-only.
+ *
+ * Choosing the entry is load-bearing. test/gates/drafts.test.mjs and
+ * test/gates/schema-violation.test.mjs both build against synthetic content whose only
+ * navigation entity has slug 'test-nav', while the real content uses 'primary' — so this
+ * prefers 'primary', falls back to the first for the locale, and renders NO <nav> at all
+ * when there is none. Never index into an empty array. Those same fixtures have no
+ * slug:'home' page either, which is why the brand link goes through pathForHome (a pure
+ * string) rather than a lookup that could fail. */
+import { getCollection } from 'astro:content';
+import { settings } from '../content.config';
+import { resolveDraftFlag } from '../contract/env';
+import { loadLinkIndex } from '../lib/site-links';
+import { linkContext, navHref, pathForHome } from '../lib/links';
+
+type Props = { locale: string };
+const { locale } = Astro.props as Props;
+
+const all = await getCollection('navigation');
+const forLocale = all.filter(
+  (n) => n.data.locale === locale && n.data.status !== 'draft',
+);
+const nav = forLocale.find((n) => n.data.slug === 'primary') ?? forLocale[0];
+
+/* An unresolvable ref is a BUILD FAILURE, not a link quietly rendered inert: a ref that does
+ * not resolve fails the build, and a published entity linking to a draft is an error in
+ * preview and production alike. Softening it here would reintroduce exactly the class of
+ * defect this guards against — a link on screen that goes nowhere. */
+const ctx = nav
+  ? linkContext(await loadLinkIndex(), {
+      collection: 'navigation',
+      id: nav.data.id,
+      slug: nav.data.slug,
+      locale: nav.data.locale,
+      status: nav.data.status,
+    }, resolveDraftFlag())
+  : null;
+
+type Item = { label: string; ref?: string; href?: string; children?: Item[] };
+const items: Item[] = (nav?.data.items ?? []) as Item[];
+
+const current = Astro.url.pathname;
+const linkFor = (item: Item) => navHref(ctx!, item);
+const isExternal = (href: string) => /^(https?:|mailto:|tel:|\/\/)/i.test(href);
+---
+<header class="site-header">
+  <div class="site-header__inner site-container">
+    <a class="site-brand" href={pathForHome(locale)}>{settings.siteName}</a>
+    {nav && (
+      <nav class="site-nav" aria-label="Primary">
+        <ul class="site-nav__list">
+          {items.map((item) => {
+            const href = linkFor(item);
+            return (
+              <li class="site-nav__item">
+                <a
+                  class="site-nav__link"
+                  href={href}
+                  aria-current={href === current ? 'page' : undefined}
+                  rel={isExternal(href) ? 'noopener noreferrer' : undefined}
+                >{item.label}</a>
+                {item.children && item.children.length > 0 && (
+                  <ul class="site-nav__sublist">
+                    {item.children.map((child) => {
+                      const childHref = linkFor(child);
+                      return (
+                        <li class="site-nav__item">
+                          <a
+                            class="site-nav__link"
+                            href={childHref}
+                            aria-current={childHref === current ? 'page' : undefined}
+                            rel={isExternal(childHref) ? 'noopener noreferrer' : undefined}
+                          >{child.label}</a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+    )}
+  </div>
+</header>

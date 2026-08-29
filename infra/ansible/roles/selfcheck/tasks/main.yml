@@ -1,0 +1,73 @@
+---
+# Ships the on-box selfcheck (templates/jamground-selfcheck.j2, run unprivileged as
+# jamground-build) and its OnFailure alert (files/jamground-selfcheck-alert, run
+# as root so it can read another unit's journal and write to the system journal regardless), the
+# two service units wiring them together, and the timer that fires the check every five minutes.
+# This converges LAST in site.yml: the checks it runs
+# are live, against whatever the box is actually serving, so everything they check (nginx, the
+# certificate, the webhook receiver) must already be up.
+#
+# curl is not guaranteed present on the base image, and every HTTP/TLS check the script performs
+# needs it — an explicit dependency rather than an accident of image size.
+
+- name: Ensure curl is present
+  ansible.builtin.apt:
+    name: curl
+    state: present
+
+- name: Ship the selfcheck script — HTTP, disk, certificate and unit checks
+  # `template:`, not `copy:` — the script asserts against `jamground_domain`, which is the
+  # fork's own name and not something a shipped file may hardcode. Same destination, same
+  # owner, same group, same 0755 as when it was copied: the mode matters, systemd invokes
+  # this directly.
+  ansible.builtin.template:
+    src: jamground-selfcheck.j2
+    dest: "{{ selfcheck_script_path }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Ship the OnFailure alert script — the one thing a failed check actually triggers
+  ansible.builtin.copy:
+    src: jamground-selfcheck-alert
+    dest: "{{ selfcheck_alert_script_path }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the selfcheck service unit
+  ansible.builtin.template:
+    src: jamground-selfcheck.service.j2
+    dest: "/etc/systemd/system/{{ selfcheck_service_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd daemon
+
+- name: Install the OnFailure alert service unit
+  ansible.builtin.template:
+    src: jamground-selfcheck-alert.service.j2
+    dest: "/etc/systemd/system/{{ selfcheck_alert_service_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd daemon
+
+- name: Install the selfcheck timer — every five minutes
+  ansible.builtin.template:
+    src: jamground-selfcheck.timer.j2
+    dest: "/etc/systemd/system/{{ selfcheck_timer_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd daemon
+
+- name: Flush handlers now, so the enable/start below sees the units just shipped
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure the selfcheck timer is enabled and running
+  ansible.builtin.systemd:
+    name: "{{ selfcheck_timer_name }}"
+    daemon_reload: true
+    state: started
+    enabled: true

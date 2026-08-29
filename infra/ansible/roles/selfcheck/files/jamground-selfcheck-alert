@@ -1,0 +1,15 @@
+#!/bin/bash
+# jamground-selfcheck-alert — the OnFailure= target of jamground-selfcheck.service, never fired
+# directly and never carrying an OnFailure= of its own, so an alert that itself fails cannot
+# recurse. There is no operator email registered for this box (infra/RUNBOOK.md — certbot itself
+# runs --register-unsafely-without-email), and the
+# off-box uptime monitor that WOULD notify a person is a separate, human-provisioned check —
+# this unit raises the alarm the one way anything already watching this box's journal can see
+# it: LOG_ALERT priority, tagged distinctly, carrying the failed run's own last output rather
+# than a bare "something failed".
+set -uo pipefail
+
+detail=$(systemctl status jamground-selfcheck.service --no-pager -n 20 2>&1 || true)
+printf '%s\n%s\n' "jamground-selfcheck FAILED:" "$detail" | systemd-cat -t jamground-selfcheck-alert -p alert
+
+exit 0

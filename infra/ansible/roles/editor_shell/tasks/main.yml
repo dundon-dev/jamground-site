@@ -1,0 +1,61 @@
+---
+# The edit vhost as a conf.d drop-in — see templates/edit.conf.j2 for why this is a drop-in and
+# not an edit to nginx.conf.j2. Converges AFTER nginx and certificates (site.yml): the
+# certificate this reuses must already be on disk, and nginx.conf's
+# `include /etc/nginx/conf.d/*.conf` must already exist for a drop-in placed here to be picked
+# up on the next reload.
+
+- name: Ensure the editor shell root exists
+  ansible.builtin.file:
+    path: "{{ editor_shell_root }}"
+    state: directory
+    # Owned by the unprivileged build account (roles/users) so a future ship can replace the
+    # tree without root, group www-data so nginx's own worker (roles/nginx's `user www-data;`)
+    # can read what it serves — neither side needs the other's privilege.
+    owner: jamground-build
+    group: www-data
+    mode: '0750'
+
+- name: Ship editor/dist/ — the built shell, static files and nothing else
+  # Built on THIS machine by the task's own verify: (editor/build.mjs) before this playbook
+  # runs, not on the box — the same pre-built-then-shipped shape roles/webhook already uses
+  # for infra/hooks/. There is no build step on the box for the shell; it talks to GitHub and
+  # to Playground from the browser only, so nothing here runs at request time.
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../editor/dist/"
+    dest: "{{ editor_shell_root }}/"
+    owner: jamground-build
+    group: www-data
+    mode: '0640'
+    directory_mode: '0750'
+
+- name: Check whether the shared certificate exists yet
+  ansible.builtin.stat:
+    path: "{{ editor_shell_cert_dir }}/fullchain.pem"
+  register: editor_shell_cert_stat
+
+- name: Render the edit vhost drop-in
+  ansible.builtin.template:
+    src: edit.conf.j2
+    dest: "{{ editor_shell_conf_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  register: editor_shell_conf
+  notify: reload nginx
+
+- name: Validate the full nginx configuration now that the drop-in is in place
+  ansible.builtin.command:
+    argv:
+      - nginx
+      - -t
+  # A conf.d fragment cannot be validated on its own the way roles/nginx validates the whole
+  # file via `validate: nginx -t -c %s` — that substitutes a temp path standing in for the
+  # WHOLE nginx.conf, and a bare `server {}` block fails that test even when it is correct.
+  # This instead tests the real, already-assembled config immediately after writing the
+  # drop-in. It is read-only, so it is safe to actually run in --check too, unlike certbot or
+  # nft: check_mode: false forces that (tools/check-playbooks.mjs would otherwise treat this as
+  # one of the four modules check mode silently skips and calls converged).
+  check_mode: false
+  changed_when: false
+  when: editor_shell_conf is changed

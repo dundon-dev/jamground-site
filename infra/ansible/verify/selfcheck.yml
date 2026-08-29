@@ -1,0 +1,51 @@
+---
+# A converge alone proves the timer and its units are on disk — not that the timer is actually
+# armed, and not that a real invocation of the check it fires still exits 0 against this box as
+# it is right now. `systemctl start --wait` runs the
+# SERVICE the timer itself fires — same User=, same Type=oneshot semantics — rather than the raw
+# script, which could diverge from what systemd actually invokes; for a oneshot unit it blocks
+# until the unit reaches `active` or `failed` and its own exit code reflects which.
+- name: Verify the selfcheck timer is armed and one run exits 0
+  hosts: jamground
+  gather_facts: false
+  tasks:
+    - name: Query the selfcheck timer's enabled state
+      ansible.builtin.command: systemctl is-enabled jamground-selfcheck.timer
+      register: selfcheck_timer_enabled
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the selfcheck timer is enabled
+      ansible.builtin.assert:
+        that:
+          - selfcheck_timer_enabled.stdout == 'enabled'
+        fail_msg: "jamground-selfcheck.timer is {{ selfcheck_timer_enabled.stdout }}, not enabled"
+
+    - name: Query the selfcheck timer's active state
+      ansible.builtin.command: systemctl is-active jamground-selfcheck.timer
+      register: selfcheck_timer_active
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the selfcheck timer is active
+      ansible.builtin.assert:
+        that:
+          - selfcheck_timer_active.stdout == 'active'
+        fail_msg: "jamground-selfcheck.timer is {{ selfcheck_timer_active.stdout }}, not active"
+
+    - name: Trigger one real run of the selfcheck service and wait for it to finish
+      ansible.builtin.command: systemctl start --wait jamground-selfcheck.service
+      register: selfcheck_run
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the manual run exited 0
+      ansible.builtin.assert:
+        that:
+          - selfcheck_run.rc == 0
+        fail_msg: >-
+          systemctl start --wait jamground-selfcheck.service exited {{ selfcheck_run.rc }}:
+          {{ selfcheck_run.stdout }} {{ selfcheck_run.stderr }}

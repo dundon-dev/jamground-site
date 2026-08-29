@@ -1,0 +1,113 @@
+/* The single source of colour, type, spacing, radii and shadows, as custom properties.
+ * Consumed by Astro.
+ *
+ * THE RULE that keeps the dark scheme at the bottom fifteen lines instead of a second
+ * stylesheet: no rule in base.css or blocks/*.css may name a --jp-color-neutral-* or
+ * --jp-color-accent* token directly. They read the semantic aliases only. That is greppable,
+ * and a violation is visibly wrong in dark mode rather than subtly wrong everywhere. */
+
+:root {
+  color-scheme: light dark;
+
+  /* Neutral ramp — one cool-grey hue, eleven steps. */
+  --jp-color-neutral-0:   #ffffff;
+  --jp-color-neutral-50:  #f8f9fb;
+  --jp-color-neutral-100: #f1f3f6;
+  --jp-color-neutral-200: #e4e7ec;
+  --jp-color-neutral-300: #cbd1da;
+  --jp-color-neutral-400: #9aa3b1;
+  --jp-color-neutral-500: #6b7482;
+  --jp-color-neutral-600: #4c5461;
+  --jp-color-neutral-700: #363d48;
+  --jp-color-neutral-800: #232932;
+  --jp-color-neutral-900: #14181f;
+
+  /* One accent. Not two. */
+  --jp-color-accent:        #2f57d4;
+  --jp-color-accent-strong: #1f3ca3;
+  --jp-color-accent-soft:   #eef1fd;
+
+  /* Semantic layer — the only colour tokens anything else may name. */
+  --jp-color-bg:            var(--jp-color-neutral-0);
+  --jp-color-bg-subtle:     var(--jp-color-neutral-50);
+  --jp-color-surface:       var(--jp-color-neutral-0);
+  --jp-color-text:          var(--jp-color-neutral-800);
+  --jp-color-text-muted:    var(--jp-color-neutral-500);
+  --jp-color-heading:       var(--jp-color-neutral-900);
+  --jp-color-border:        var(--jp-color-neutral-200);
+  --jp-color-border-strong: var(--jp-color-neutral-300);
+  --jp-color-link:          var(--jp-color-accent);
+  --jp-color-link-hover:    var(--jp-color-accent-strong);
+  --jp-color-accent-bg:     var(--jp-color-accent-soft);
+  --jp-color-on-accent:     var(--jp-color-neutral-0);
+  --jp-color-focus:         var(--jp-color-accent);
+
+  /* Type — system fonts only. No webfont, no download, no layout shift. */
+  --jp-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+                  "Helvetica Neue", Arial, sans-serif;
+  --jp-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+                  "Liberation Mono", monospace;
+
+  /* Scale — a major third off a 17px body, fluid only at the top step. */
+  --jp-text-xs:   0.8125rem;
+  --jp-text-sm:   0.9375rem;
+  --jp-text-base: 1.0625rem;
+  --jp-text-lg:   1.25rem;
+  --jp-text-xl:   1.5rem;
+  --jp-text-2xl:  1.875rem;
+  --jp-text-3xl:  clamp(2.125rem, 1.5rem + 2.4vw, 3.125rem);
+
+  --jp-leading-tight:  1.15;
+  --jp-leading-snug:   1.3;
+  --jp-leading-normal: 1.65;
+  --jp-tracking-tight: -0.015em;
+
+  --jp-weight-normal: 400;
+  --jp-weight-medium: 500;
+  --jp-weight-bold:   700;
+
+  /* Spacing — 4px base, opening out geometrically. Generous by default. */
+  --jp-space-1: 0.25rem;
+  --jp-space-2: 0.5rem;
+  --jp-space-3: 0.75rem;
+  --jp-space-4: 1rem;
+  --jp-space-5: 1.5rem;
+  --jp-space-6: 2rem;
+  --jp-space-7: 3rem;
+  --jp-space-8: 4rem;
+  --jp-space-9: 6rem;
+
+  /* Radii */
+  --jp-radius-sm:   4px;
+  --jp-radius-md:   8px;
+  --jp-radius-lg:   14px;
+  --jp-radius-pill: 999px;
+
+  /* Shadows — two. A third is a decision nobody made. */
+  --jp-shadow-sm: 0 1px 2px rgb(20 24 31 / 0.06), 0 1px 1px rgb(20 24 31 / 0.04);
+  --jp-shadow-md: 0 6px 24px rgb(20 24 31 / 0.08), 0 2px 6px rgb(20 24 31 / 0.05);
+
+  /* Layout */
+  --jp-container: 68rem;   /* page chrome and full-bleed blocks */
+  --jp-measure:   38rem;   /* prose column, ~70 characters at the body size */
+  --jp-gutter:    var(--jp-space-5);
+}
+
+/* Dark scheme: the semantic layer is reassigned, nothing else. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --jp-color-bg:            var(--jp-color-neutral-900);
+    --jp-color-bg-subtle:     var(--jp-color-neutral-800);
+    --jp-color-surface:       var(--jp-color-neutral-800);
+    --jp-color-text:          var(--jp-color-neutral-200);
+    --jp-color-text-muted:    var(--jp-color-neutral-400);
+    --jp-color-heading:       var(--jp-color-neutral-0);
+    --jp-color-border:        var(--jp-color-neutral-700);
+    --jp-color-border-strong: var(--jp-color-neutral-600);
+    --jp-color-link:          #8ea6f5;
+    --jp-color-link-hover:    #b4c4fa;
+    --jp-color-accent-bg:     var(--jp-color-neutral-700);
+    --jp-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --jp-shadow-md: 0 6px 24px rgb(0 0 0 / 0.45);
+  }
+}

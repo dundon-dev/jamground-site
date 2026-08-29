@@ -1,0 +1,198 @@
+---
+# A converge alone proves the units are on disk with the right owner and mode — not that systemd
+# can actually load them, and not that the properties they claim to set are the properties
+# systemd computes. `systemd-analyze verify` proves the first: a syntax error or an invalid
+# resource-control value fails to parse and exits non-zero. `systemctl show`'s effective
+# properties prove the second — a unit that loads is not a unit that caps anything, so every
+# assertion below is on a property VALUE, never on a unit merely existing.
+#
+# The preview template is verified with a synthetic instance (0) — systemd resolves and computes
+# a template's static properties without the unit ever having run, the same way
+# `systemctl show getty@tty1` works before anyone has logged in on tty1.
+#
+# Paths and values are repeated here as literals rather than sourced from roles/isolation's
+# defaults — the same convention verify/deploy.yml and verify/nginx.yml already follow, because a
+# verify playbook must not depend on a converge-time variable it never loads.
+- name: Verify resource isolation — slices, per-build caps, previews filesystem
+  hosts: jamground
+  gather_facts: false
+  vars:
+    isolation_units:
+      - jamground-production.slice
+      - jamground-preview.slice
+      - jamground-production-build.service
+      - "jamground-preview-build@0.service"
+    isolation_previews_root: /srv/previews
+    isolation_previews_image: /var/lib/jamground/previews.img
+    isolation_previews_size_bytes: 10737418240   # 10240M, fallocate's exact byte count
+  tasks:
+    - name: Load and validate every shipped unit
+      ansible.builtin.command:
+        argv: "{{ ['systemd-analyze', 'verify'] + isolation_units }}"
+      register: isolation_verify
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert every shipped unit is well-formed
+      ansible.builtin.assert:
+        that:
+          - isolation_verify.rc == 0
+        fail_msg: >-
+          systemd-analyze verify failed (rc={{ isolation_verify.rc }}):
+          {{ isolation_verify.stdout }} {{ isolation_verify.stderr }}
+
+    - name: Read the production slice's CPUWeight
+      ansible.builtin.command: systemctl show jamground-production.slice --property=CPUWeight --value
+      register: isolation_production_weight
+      check_mode: false
+      changed_when: false
+
+    - name: Read the preview slice's CPUWeight
+      ansible.builtin.command: systemctl show jamground-preview.slice --property=CPUWeight --value
+      register: isolation_preview_weight
+      check_mode: false
+      changed_when: false
+
+    - name: Assert the production slice is favoured over the preview slice
+      ansible.builtin.assert:
+        that:
+          - isolation_production_weight.stdout | int == 500
+          - isolation_preview_weight.stdout | int == 50
+        fail_msg: >-
+          production CPUWeight={{ isolation_production_weight.stdout }}, preview
+          CPUWeight={{ isolation_preview_weight.stdout }} — production is not favoured
+
+    - name: Read the preview slice's aggregate MemoryMax
+      ansible.builtin.command: systemctl show jamground-preview.slice --property=MemoryMax --value
+      register: isolation_preview_slice_memory
+      check_mode: false
+      changed_when: false
+
+    - name: Assert the preview slice's aggregate memory cap
+      ansible.builtin.assert:
+        that:
+          - isolation_preview_slice_memory.stdout | int == 3221225472
+        fail_msg: >-
+          jamground-preview.slice MemoryMax={{ isolation_preview_slice_memory.stdout }}, expected
+          3221225472 (3072M) — two concurrent builds at ~1.2 GB each plus headroom
+
+    - name: Read the production per-build unit's MemoryMax
+      ansible.builtin.command: systemctl show jamground-production-build.service --property=MemoryMax --value
+      register: isolation_prodbuild_memory
+      check_mode: false
+      changed_when: false
+
+    - name: Read the production per-build unit's RuntimeMaxUSec
+      ansible.builtin.command: systemctl show jamground-production-build.service --property=RuntimeMaxUSec --value
+      register: isolation_prodbuild_runtime
+      check_mode: false
+      changed_when: false
+
+    - name: Read the production per-build unit's PrivateNetwork
+      ansible.builtin.command: systemctl show jamground-production-build.service --property=PrivateNetwork --value
+      register: isolation_prodbuild_privnet
+      check_mode: false
+      changed_when: false
+
+    - name: Assert the production per-build unit's caps
+      ansible.builtin.assert:
+        that:
+          - isolation_prodbuild_memory.stdout | int == 4294967296
+          - "'30min' in isolation_prodbuild_runtime.stdout"
+          - isolation_prodbuild_privnet.stdout == 'yes'
+        fail_msg: >-
+          jamground-production-build.service: MemoryMax={{ isolation_prodbuild_memory.stdout }},
+          RuntimeMaxUSec={{ isolation_prodbuild_runtime.stdout }},
+          PrivateNetwork={{ isolation_prodbuild_privnet.stdout }}
+
+    - name: Read the preview per-build unit's MemoryMax
+      ansible.builtin.command: systemctl show "jamground-preview-build@0.service" --property=MemoryMax --value
+      register: isolation_previewbuild_memory
+      check_mode: false
+      changed_when: false
+
+    - name: Read the preview per-build unit's RuntimeMaxUSec
+      ansible.builtin.command: systemctl show "jamground-preview-build@0.service" --property=RuntimeMaxUSec --value
+      register: isolation_previewbuild_runtime
+      check_mode: false
+      changed_when: false
+
+    - name: Read the preview per-build unit's PrivateNetwork
+      ansible.builtin.command: systemctl show "jamground-preview-build@0.service" --property=PrivateNetwork --value
+      register: isolation_previewbuild_privnet
+      check_mode: false
+      changed_when: false
+
+    - name: Assert the preview per-build unit's caps
+      ansible.builtin.assert:
+        that:
+          - isolation_previewbuild_memory.stdout | int == 1610612736
+          - "'10min' in isolation_previewbuild_runtime.stdout"
+          - isolation_previewbuild_privnet.stdout == 'yes'
+        fail_msg: >-
+          jamground-preview-build@0.service: MemoryMax={{ isolation_previewbuild_memory.stdout }},
+          RuntimeMaxUSec={{ isolation_previewbuild_runtime.stdout }},
+          PrivateNetwork={{ isolation_previewbuild_privnet.stdout }}
+
+    - name: Check that the previews root is its own mount point, not a directory on /
+      ansible.builtin.command: findmnt --noheadings --output SOURCE,FSTYPE --target {{ isolation_previews_root }}
+      register: isolation_previews_findmnt
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the previews root is its own mount point, ext4
+      ansible.builtin.assert:
+        that:
+          - isolation_previews_findmnt.rc == 0
+          - isolation_previews_findmnt.stdout is search('ext4')
+        fail_msg: >-
+          {{ isolation_previews_root }} is not its own ext4 mount point:
+          {{ isolation_previews_findmnt.stdout }}
+
+    # findmnt's SOURCE is the loop device (`/dev/loopN`), not the backing file — cross-check with
+    # losetup that THIS loop device is the one backed by the previews image, so the assertion is
+    # on the actual filesystem backing the mount, not merely "some ext4 filesystem is mounted
+    # there".
+    - name: Find the loop device backing the previews image
+      ansible.builtin.command: losetup -j {{ isolation_previews_image }}
+      register: isolation_previews_losetup
+      check_mode: false
+      changed_when: false
+
+    - name: Assert the mounted loop device is the one backed by the previews image
+      ansible.builtin.assert:
+        that:
+          - isolation_previews_losetup.stdout is search(isolation_previews_findmnt.stdout.split(' ')[0])
+        fail_msg: >-
+          {{ isolation_previews_root }} is mounted from {{ isolation_previews_findmnt.stdout }},
+          which losetup does not report as backed by {{ isolation_previews_image }}:
+          {{ isolation_previews_losetup.stdout }}
+
+    - name: Read the previews image's size on disk
+      ansible.builtin.stat:
+        path: "{{ isolation_previews_image }}"
+      register: isolation_previews_image_stat
+
+    - name: Assert the previews filesystem is capped at the configured size
+      ansible.builtin.assert:
+        that:
+          - isolation_previews_image_stat.stat.size == isolation_previews_size_bytes
+        fail_msg: >-
+          {{ isolation_previews_image }} is {{ isolation_previews_image_stat.stat.size }} bytes,
+          expected {{ isolation_previews_size_bytes }} — the cap that keeps a preview build from
+          filling / has drifted
+
+    - name: Assert the previews root is owned by the account that will build into it
+      ansible.builtin.stat:
+        path: "{{ isolation_previews_root }}"
+      register: isolation_previews_root_stat
+
+    - name: Assert ownership
+      ansible.builtin.assert:
+        that:
+          - isolation_previews_root_stat.stat.pw_name == 'jamground-build'
+        fail_msg: >-
+          {{ isolation_previews_root }} is owned by
+          {{ isolation_previews_root_stat.stat.pw_name }}, not jamground-build

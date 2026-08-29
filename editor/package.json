@@ -1,0 +1,21 @@
+{
+  "name": "jamground-editor",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@wordpress/blocks": "15.26.0",
+    "@wordpress/block-library": "10.4.0",
+    "esbuild": "0.28.2",
+    "jsdom": "29.1.1",
+    "playwright": "1.62.1",
+    "remark-gfm": "4.0.1",
+    "remark-parse": "11.0.0",
+    "remark-stringify": "11.0.0",
+    "unified": "11.0.5"
+  },
+  "scripts": {
+    "test": "node --test 'test/*.test.mjs'",
+    "observe:draft": "node --test test/playwright/draft.test.mjs",
+    "observe:inserter": "node --test test/playwright/mu-plugin.test.mjs"
+  }
+}

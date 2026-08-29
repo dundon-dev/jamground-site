@@ -1,0 +1,36 @@
+---
+# Two accounts. jamground-build runs the build itself and holds no privilege at all — no sudo,
+# no secrets — making "build runs unprivileged" literal. jamground is the
+# orchestrator: it holds exactly two fixed, no-argument sudo entries (flipping the release
+# symlink, reloading nginx) and nothing else, so there is no path or option injection surface
+# to widen.
+
+- name: Create the unprivileged build account
+  ansible.builtin.user:
+    name: jamground-build
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: true
+    password_lock: true
+    state: present
+
+- name: Create the orchestrator account
+  ansible.builtin.user:
+    name: jamground
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    password_lock: true
+    state: present
+
+- name: Grant jamground its two no-argument sudo wrappers, and nothing else
+  ansible.builtin.template:
+    src: sudoers-jamground.j2
+    dest: /etc/sudoers.d/jamground
+    owner: root
+    group: root
+    mode: '0440'
+    # A broken sudoers file on a box with no console and no snapshots is unrecoverable — visudo
+    # rejects the write rather than letting a syntax error land on disk (infra/RUNBOOK.md
+    # §Hardening makes the same call for the firewall step, for the same reason).
+    validate: 'visudo -cf %s'

@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+#
+# One instance per open preview — %i is the pull-request number. Ships live and unused, the
+# same shape roles/webhook's receiver and roles/nginx's preview server block already ship
+# theirs in: nothing instantiates this yet, and ExecStart is a placeholder until a real build
+# command is wired through it. MemoryMax here is per BUILD, not per slice — two instances
+# running at once still sit under jamground-preview.slice's aggregate cap, which is the number
+# actually sized against "two concurrent".
+[Unit]
+Description=jamground preview build %i — per-build resource envelope
+After=network.target
+
+[Service]
+Type=oneshot
+Slice={{ isolation_preview_slice }}
+User=jamground-build
+Group=jamground-build
+MemoryMax={{ isolation_preview_build_memory_max }}
+RuntimeMaxSec={{ isolation_preview_build_runtime_max_sec }}
+PrivateNetwork=yes
+NoNewPrivileges=yes
+ExecStart=/bin/true

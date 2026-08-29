@@ -1,0 +1,20 @@
+---
+/* core/image. Markup observed from core's own save.js (src/image/save.js):
+ * this contract carries no align/link/dimension attributes, so only the
+ * figure/img pair and the optional caption apply. `caption`'s figcaption class
+ * (`wp-element-caption`) comes from `__experimentalGetElementClassName('caption')` in
+ * @wordpress/block-editor — read directly off that source rather than guessed, the same
+ * "observed, not authored" standard applied throughout this markup table.
+ * `media.alt` follows Hero.astro's precedent for the same MediaRef union: a
+ * decorative image gets an empty alt, never the (absent) alt text. */
+import type { z } from 'zod';
+import type { Block } from '../../contract/blocks.ts';
+
+type Props = Omit<Extract<z.infer<typeof Block>, { type: 'image' }>, 'type'>;
+
+const { media, caption } = Astro.props as Props;
+---
+<figure class="wp-block-image">
+  <img src={media.ref} alt={media.decorative ? '' : media.alt} />
+  {caption && <figcaption class="wp-element-caption">{caption}</figcaption>}
+</figure>

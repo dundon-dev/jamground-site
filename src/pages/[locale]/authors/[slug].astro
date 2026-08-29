@@ -1,0 +1,60 @@
+---
+/* Author page route. Renders individual authors. getStaticPaths enumerates
+ * Settings.locales and authors within each locale. Drafts are absent from production output
+ * entirely: no route, no file, no sitemap entry. */
+import { getCollection } from 'astro:content';
+import { settings } from '../../../content.config';
+import { localeToSegment } from '../../../contract/defs';
+import { resolveDraftFlag } from '../../../contract/env';
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+
+type Props = {
+  author: Awaited<ReturnType<typeof getCollection<'authors'>>>[number];
+};
+
+const { author } = Astro.props as Props;
+
+export async function getStaticPaths() {
+  const allAuthors = await getCollection('authors');
+  const includeDrafts = resolveDraftFlag();
+
+  return settings.locales
+    .flatMap(locale => {
+      // Get all authors for this locale
+      const authorList = allAuthors.filter(a => a.data.locale === locale);
+
+      // Exclude drafts from production output entirely
+      const filtered = authorList.filter(
+        a => includeDrafts || a.data.status !== 'draft',
+      );
+
+      return filtered.map(a => ({
+        params: { locale: localeToSegment(locale), slug: a.data.slug },
+        props: { author: a },
+      }));
+    });
+}
+---
+
+<BaseLayout
+  title={author.data.seo?.title ?? author.data.name}
+  description={author.data.seo?.description}
+  locale={author.data.locale}
+>
+  <article class="site-author site-container">
+    <div class="site-author__identity">
+      {author.data.avatar && (
+        <img
+          class="site-author__avatar"
+          src={author.data.avatar.ref}
+          alt={author.data.avatar.alt || author.data.name}
+        />
+      )}
+      <div>
+        <h1 class="site-page-title">{author.data.name}</h1>
+        {author.data.role && <p class="site-author__role">{author.data.role}</p>}
+      </div>
+    </div>
+    {author.data.bio && <div class="site-prose"><p>{author.data.bio}</p></div>}
+  </article>
+</BaseLayout>

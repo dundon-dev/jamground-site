@@ -1,0 +1,75 @@
+#!/bin/bash
+# {{ ansible_managed }}
+#
+# jamground-selfcheck — HTTP, disk headroom, certificate expiry and unit-liveness checks:
+# monitoring and alerting on the production root, watching production availability and error
+# rates. Runs as jamground-build, unprivileged, fired every five minutes by
+# jamground-selfcheck.timer and once by hand in
+# verify/selfcheck.yml. It never notifies anyone itself — OnFailure= on the service wrapping
+# this script is the whole of the alerting path (jamground-selfcheck-alert), so this script's
+# only job is to fail loudly and let systemd take it from there.
+#
+# The site's actual page is the DEFAULT LOCALE INDEX, not `/`: `/` is
+# an nginx 301 by construction and can never legitimately return 200. Checking `/` alone — as a
+# 301 satisfied by a redirect into a 404 downstream — would be a false green, so
+# it is asserted here as a 301 ALONGSIDE /en-us/'s 200, never as the only HTTP assertion, and
+# without following the redirect (a check that follows cannot tell the two failures apart).
+#
+# Every check below runs against 127.0.0.1 with the domain forced by --resolve/-servername,
+# never against public DNS: a check running ON the box that depends on the box's own outbound
+# DNS to see the box is a check that can fail for a reason that has nothing to do with what it
+# is checking. (An off-box uptime monitor is the one that must reach the public domain, and it
+# is deliberately a separate, human-provisioned check — a check running on the VPS cannot
+# observe the VPS being down.)
+set -uo pipefail
+
+# Rendered by roles/selfcheck from templates/jamground-selfcheck.j2. This one value is the
+# reason this file is a template rather than files/: it was the last hardcoded copy of the
+# domain outside group_vars, sitting in a SHIPPED SCRIPT where a sweep over role defaults
+# would never have found it — and a selfcheck asserting against the wrong host is a monitor
+# that reports green about a site nobody is serving. Everything else here is still a literal
+# on purpose: thresholds and the unit list are this script's own policy, not the fork's
+# identity, and a script systemd invokes with no control node in the loop cannot template
+# itself at run time.
+domain={{ jamground_domain }}
+disk_path=/
+disk_max_percent=90
+cert_min_days=14
+units=(nginx.service jamground-webhook.service)
+
+fail() {
+  echo "jamground-selfcheck: $1" >&2
+  exit 1
+}
+
+# --- HTTP: / redirects, /en-us/ actually serves -----------------------------------------------
+root_code=$(curl -s -o /dev/null -w '%{http_code}' --max-redirs 0 --resolve "${domain}:80:127.0.0.1" "http://${domain}/")
+[ "$root_code" = "301" ] || fail "http://${domain}/ returned ${root_code}, expected 301"
+
+# -k: expiry is this script's own job, below, with a clean day-count rather than a bare curl
+# SSL error — a curl SSL error and a serving-but-404 error must not be indistinguishable here.
+index_code=$(curl -s -o /dev/null -w '%{http_code}' -k --resolve "${domain}:443:127.0.0.1" "https://${domain}/en-us/")
+[ "$index_code" = "200" ] || fail "https://${domain}/en-us/ returned ${index_code}, expected 200"
+
+# --- Disk headroom ------------------------------------------------------------------------------
+disk_percent=$(df --output=pcent "$disk_path" | tail -n1 | tr -dc '0-9')
+[ -n "$disk_percent" ] || fail "could not read disk usage for ${disk_path}"
+[ "$disk_percent" -lt "$disk_max_percent" ] || fail "${disk_path} is ${disk_percent}% full, at or above the ${disk_max_percent}% threshold"
+
+# --- Certificate expiry, read from what is actually SERVED, not a file this unprivileged
+# account may have no permission to open -----------------------------------------------------
+end_date=$(echo | openssl s_client -connect "127.0.0.1:443" -servername "${domain}" 2>/dev/null \
+  | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+[ -n "$end_date" ] || fail "could not read the certificate served on 127.0.0.1:443 (SNI ${domain})"
+
+end_epoch=$(date -d "$end_date" +%s) || fail "could not parse certificate end date: ${end_date}"
+now_epoch=$(date -u +%s)
+days_left=$(( (end_epoch - now_epoch) / 86400 ))
+[ "$days_left" -ge "$cert_min_days" ] || fail "certificate expires in ${days_left} day(s), below the ${cert_min_days}-day threshold"
+
+# --- Unit liveness -------------------------------------------------------------------------------
+for unit in "${units[@]}"; do
+  systemctl is-active --quiet "$unit" || fail "${unit} is not active"
+done
+
+echo "jamground-selfcheck: all checks passed"

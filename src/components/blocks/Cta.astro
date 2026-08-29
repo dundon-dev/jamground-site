@@ -1,0 +1,25 @@
+---
+/* jamground/cta. Dynamic block; see Hero.astro for the fidelity note, for why
+ * resolution happens upstream in the route rather than here, and for what `link.href` is.
+ * `link` is required on this block, so the guard below is unconditional. */
+import type { z } from 'zod';
+import type { Block } from '../../contract/blocks.ts';
+import type { ResolvedLink } from '../../lib/links.ts';
+
+type Props = Omit<Extract<z.infer<typeof Block>, { type: 'cta' }>, 'type' | 'link'> & {
+  link: ResolvedLink;
+};
+
+const { heading, body, link } = Astro.props as Props;
+
+if (typeof (link as { href?: unknown })?.href !== 'string') {
+  throw new Error(
+    'cta link reached the renderer unresolved — blocks must go through resolveBlockLinks() (INV-11)',
+  );
+}
+---
+<section class="jp-cta">
+  <h2 class="jp-cta__heading">{heading}</h2>
+  {body && <p class="jp-cta__body">{body}</p>}
+  <a class="jp-cta__link" href={link.href}>{link.label}</a>
+</section>

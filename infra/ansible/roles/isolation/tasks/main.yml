@@ -1,0 +1,122 @@
+---
+# Slices favour production over preview: a runaway
+# preview build must never starve the box the production deploy shares it with. The per-build
+# units ship live and unused, the same shape roles/webhook's receiver and roles/nginx's preview
+# server block already ship theirs in — ExecStart is a placeholder until the task that wires a
+# real build command through it lands, so what converges here and what verify/isolation.yml
+# checks is the resource envelope itself, not that placeholder command.
+#
+# jamground-production.slice and jamground-preview.slice need no explicit jamground.slice parent
+# unit: systemd derives a slice's position in the tree from its dash-separated name and creates
+# any needed intermediate slice implicitly (systemd.slice(5)).
+#
+# Previews get a separate, fixed-size loopback filesystem at the same path roles/nginx already
+# serves them from (nginx_previews_root, repeated here as isolation_previews_root — the same
+# cross-role convention every shared path in this repo already follows) so a preview build
+# filling its own disk cannot also block a production deploy that needs space on /.
+
+- name: Ship the production slice — favoured
+  ansible.builtin.template:
+    src: jamground-production.slice.j2
+    dest: /etc/systemd/system/jamground-production.slice
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd daemon
+
+- name: Ship the preview slice — capped
+  ansible.builtin.template:
+    src: jamground-preview.slice.j2
+    dest: /etc/systemd/system/jamground-preview.slice
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd daemon
+
+- name: Ship the production per-build unit
+  ansible.builtin.template:
+    src: jamground-production-build.service.j2
+    dest: /etc/systemd/system/jamground-production-build.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd daemon
+
+- name: Ship the preview per-build unit template
+  ansible.builtin.template:
+    src: "jamground-preview-build@.service.j2"
+    dest: "/etc/systemd/system/jamground-preview-build@.service"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd daemon
+
+- name: Flush handlers now, so this same converge already reflects the shipped units
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure e2fsprogs is present — mkfs.ext4 needs it
+  ansible.builtin.apt:
+    name: e2fsprogs
+    state: present
+
+- name: Ensure the previews image's parent directory exists
+  ansible.builtin.file:
+    path: "{{ isolation_previews_image | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Check whether the previews image already exists
+  ansible.builtin.stat:
+    path: "{{ isolation_previews_image }}"
+  register: isolation_previews_image_stat
+
+# Only ever runs once: allocating and formatting on a later converge would either no-op noisily
+# or, worse, reformat over real preview data. The same one-shot-seed shape roles/deploy and
+# roles/webhook already use for their own irreversible first step.
+#
+# `changed_when: true` alone, with no `check_mode: false` — the same pairing roles/deploy's own
+# irreversible `mv -T` flip uses. This is a mutating step, not a read-only probe, so `--check`
+# must SKIP it rather than actually allocate or format anything; `changed_when` still gives an
+# honest predicted-change report.
+- name: Create and format the previews filesystem when it does not exist yet
+  when: not isolation_previews_image_stat.stat.exists
+  block:
+    - name: Allocate the fixed-size previews image
+      ansible.builtin.command:
+        argv: [fallocate, -l, "{{ isolation_previews_size_mb }}M", "{{ isolation_previews_image }}"]
+      changed_when: true
+
+    - name: Format the previews image as ext4
+      ansible.builtin.command:
+        argv: [mkfs.ext4, -F, -q, "{{ isolation_previews_image }}"]
+      changed_when: true
+
+# No owner/group/mode here — this creates the placeholder BEFORE the mount, and the mounted
+# filesystem's own root directory (set by the task below) is what actually persists. Asserting
+# ownership here too would fight that task every run: this directory only exists at all before
+# the very first mount.
+- name: Ensure the previews mount point exists
+  ansible.builtin.file:
+    path: "{{ isolation_previews_root }}"
+    state: directory
+
+- name: Mount the previews filesystem — separate from /, so it cannot block a production deploy
+  ansible.posix.mount:
+    path: "{{ isolation_previews_root }}"
+    src: "{{ isolation_previews_image }}"
+    fstype: ext4
+    opts: loop
+    state: mounted
+
+# Mounting a fresh ext4 filesystem resets the mount point to root:root (plus lost+found) — this
+# must run AFTER the mount, not instead of the plain directory task above, or a remount would
+# silently revert ownership underneath it.
+- name: Ensure the mounted previews root is owned by the account that will build into it
+  ansible.builtin.file:
+    path: "{{ isolation_previews_root }}"
+    state: directory
+    owner: jamground-build
+    group: jamground-build
+    mode: '0755'

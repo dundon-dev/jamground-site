@@ -1,0 +1,184 @@
+---
+# Two repositories, two SSH deploy keys, one clone per repository — mechanically pulled, never
+# pushed to. Nothing here writes to either clone — a clone is what the box PULLS, and a role
+# that edited it would be faking that pull model rather than testing it.
+# Performing a build from these clones, and flipping `current` onto it, is a separate role's
+# job: this role's whole responsibility ends at "the box holds two current, read-only clones".
+#
+# The read-only property of each deploy key is not something this role can assert about
+# itself; it is a property of how the key was registered above (`read_only: true`), not of
+# these tasks.
+# What the clones actually CONTAIN — a buildable site tree, a real content/ tree — is asserted by
+# verify/content-repos.yml, a state assertion rather than a log grep.
+#
+# Registration happens with `delegate_to: localhost` throughout: `gh auth token` never
+# leaves the control node, and the box never sees a GitHub credential capable of writing
+# anything — the whole point of the pull model is that nothing in GitHub holds a credential that
+# can reach the box, and the converse holds too: the box holds no credential GitHub would honour
+# for a write.
+
+- name: Ensure the /etc/jamground directory exists
+  ansible.builtin.file:
+    path: /etc/jamground
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Ensure the deploy-key directory exists
+  ansible.builtin.file:
+    path: "{{ content_repos_keys_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Generate the site repository's own deploy keypair
+  community.crypto.openssh_keypair:
+    path: "{{ content_repos_site_key }}"
+    type: ed25519
+    comment: "jamground-vps deploy key — {{ content_repos_org }}/{{ content_repos_site_repo }} (read-only)"
+    owner: jamground-build
+    group: jamground-build
+    mode: '0600'
+  register: content_repos_site_keypair
+
+- name: Generate the content repository's own deploy keypair
+  community.crypto.openssh_keypair:
+    path: "{{ content_repos_content_key }}"
+    type: ed25519
+    comment: "jamground-vps deploy key — {{ content_repos_org }}/{{ content_repos_content_repo }} (read-only)"
+    owner: jamground-build
+    group: jamground-build
+    mode: '0600'
+  register: content_repos_content_keypair
+
+- name: Read a GitHub token from the control node's own gh session — never copied to the box
+  ansible.builtin.command: gh auth token
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: false
+  register: content_repos_gh_token
+  no_log: true
+
+- name: Check whether the organisation currently allows deploy keys on its repositories
+  ansible.builtin.uri:
+    url: "https://api.github.com/orgs/{{ content_repos_org }}"
+    method: GET
+    headers:
+      Authorization: "token {{ content_repos_gh_token.stdout }}"
+      Accept: application/vnd.github+json
+  register: content_repos_org_settings
+  no_log: true
+  delegate_to: localhost
+  become: false
+
+# This organisation is created with deploy keys disabled for every
+# repository it holds — `POST .../keys` returns 422 "Deploy keys are disabled for this
+# repository" regardless of token scope or per-repository admin rights, because the setting is
+# organisation-wide, not per-repository. `admin:org` is exactly the scope that flips it, and
+# the register tasks below cannot succeed until this one has.
+- name: Enable deploy keys for this organisation's repositories — off by default, org-wide
+  ansible.builtin.uri:
+    url: "https://api.github.com/orgs/{{ content_repos_org }}"
+    method: PATCH
+    headers:
+      Authorization: "token {{ content_repos_gh_token.stdout }}"
+      Accept: application/vnd.github+json
+    body_format: json
+    body:
+      deploy_keys_enabled_for_repositories: true
+    status_code: [200]
+  when: not (content_repos_org_settings.json.deploy_keys_enabled_for_repositories | default(false))
+  delegate_to: localhost
+  become: false
+  no_log: true
+  changed_when: true
+
+- name: Register the site repository's deploy key, read-only, from the control node
+  community.general.github_deploy_key:
+    owner: "{{ content_repos_org }}"
+    repo: "{{ content_repos_site_repo }}"
+    name: "jamground-vps ({{ content_repos_site_repo }}, read-only)"
+    key: "{{ content_repos_site_keypair.public_key }}"
+    read_only: true
+    token: "{{ content_repos_gh_token.stdout }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Register the content repository's deploy key, read-only, from the control node
+  community.general.github_deploy_key:
+    owner: "{{ content_repos_org }}"
+    repo: "{{ content_repos_content_repo }}"
+    name: "jamground-vps ({{ content_repos_content_repo }}, read-only)"
+    key: "{{ content_repos_content_keypair.public_key }}"
+    read_only: true
+    token: "{{ content_repos_gh_token.stdout }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Ensure the checkout root exists, owned by the unprivileged build account
+  ansible.builtin.file:
+    path: "{{ content_repos_root }}"
+    state: directory
+    owner: jamground-build
+    group: jamground-build
+    mode: '0755'
+
+- name: Ensure git is installed
+  ansible.builtin.apt:
+    name: git
+    state: present
+
+# `key_file` makes the git module set `IdentitiesOnly=yes` itself, so each clone only ever offers
+# the one key cut for it — the same boundary the two-keypair design holds on the GitHub side.
+# `accept_newhostkey` is trust-on-first-use for github.com's host key; there is no earlier point
+# in this role where that trust could be established some other way.
+- name: Clone (or fast-forward) the site repository over its own read-only deploy key
+  ansible.builtin.git:
+    repo: "git@github.com:{{ content_repos_org }}/{{ content_repos_site_repo }}.git"
+    dest: "{{ content_repos_site_checkout }}"
+    version: HEAD
+    key_file: "{{ content_repos_site_key }}"
+    accept_newhostkey: true
+  become: true
+  become_user: jamground-build
+  register: content_repos_site_checkout_result
+
+- name: Clone (or fast-forward) the content repository over its own read-only deploy key
+  ansible.builtin.git:
+    repo: "git@github.com:{{ content_repos_org }}/{{ content_repos_content_repo }}.git"
+    dest: "{{ content_repos_content_checkout }}"
+    version: HEAD
+    key_file: "{{ content_repos_content_key }}"
+    accept_newhostkey: true
+  become: true
+  become_user: jamground-build
+  register: content_repos_content_checkout_result
+
+# jamground-deploy names every release `<utc>-<contentSha7>-<siteSha7>` and records both SHAs
+# in the manifest — a fact about the RELEASE, not a one-shot latch. An earlier version of this
+# task gated the one deploy it ever performed on `current` still naming roles/deploy's
+# placeholder seed release: true exactly once, and permanently false on every converge since,
+# which skipped the build and reported converged — a false green, the worst available shape
+# here. Comparing the manifest to what is actually on disk right now survives every later
+# content or site change and needs nothing reset by hand.
+- name: Read the current release's manifest, to tell a real build from a stale one
+  ansible.builtin.slurp:
+    path: "{{ content_repos_deploy_current }}/manifest.json"
+  register: content_repos_current_manifest_slurp
+
+- name: Pull, build and flip when current does not name both checkouts' HEAD
+  ansible.builtin.command: "{{ content_repos_deploy_script }}"
+  environment:
+    JAMGROUND_SITE_REPO: "{{ content_repos_site_checkout }}"
+    JAMGROUND_CONTENT_REPO: "{{ content_repos_content_checkout }}"
+  when: >-
+    (content_repos_current_manifest_slurp.content | b64decode | from_json).contentSha
+      != content_repos_content_checkout_result.after[:7]
+    or (content_repos_current_manifest_slurp.content | b64decode | from_json).siteSha
+      != content_repos_site_checkout_result.after[:7]
+  changed_when: true

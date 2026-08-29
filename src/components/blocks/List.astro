@@ -1,0 +1,24 @@
+---
+/* core/list + core/list-item. Markup observed from core's own save.js
+ * (src/list/save.js, src/list-item/save.js): WordPress nests a whole
+ * `core/list` block inside a `core/list-item`'s InnerBlocks slot, so a nested list sits
+ * inside its parent `<li>`, directly after that item's own text — not beside it.
+ *
+ * The three depth levels in the contract (List, ListL2, ListL3) share exactly one
+ * shape, `{ordered?, items: [{text, list?}]}`; the cap at three is enforced by the schema
+ * author writing three levels out explicitly rather than recursing,
+ * not by a different shape at each depth. So one recursive component covers all three,
+ * using `Astro.self` — Astro's own supported recursion mechanism, chosen because a
+ * cross-file `.astro` import cannot be resolved by the temp-file compile harness this test
+ * reuses from `test/blocks/custom.test.mjs`, which compiles exactly one file. */
+interface ListItem { text: string; list?: { ordered?: boolean; items: ListItem[] } }
+type Props = { ordered?: boolean; items: ListItem[] };
+
+const { ordered, items } = Astro.props as Props;
+const Tag = ordered ? 'ol' : 'ul';
+---
+<Tag class="wp-block-list">
+  {items.map((item) => (
+    <li>{item.text}{item.list && <Astro.self ordered={item.list.ordered} items={item.list.items} />}</li>
+  ))}
+</Tag>

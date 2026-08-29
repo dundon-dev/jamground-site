@@ -1,0 +1,9 @@
+#!/bin/bash
+# jamground-reload-nginx — the other privileged half of a deploy. The ordering: the
+# redirect map is not atomic with the flip, so it is atomically replaced first, THEN current is
+# flipped, THEN `nginx -t && systemctl reload` — this script is that last step. Root-owned,
+# invoked by `jamground` via the no-argument sudo entry roles/users grants — no arguments
+# accepted anywhere.
+set -euo pipefail
+nginx -t
+systemctl reload nginx

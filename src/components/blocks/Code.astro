@@ -1,0 +1,14 @@
+---
+/* core/code. Markup observed from core's own save.js (src/code/save.js).
+ * No `language` attribute exists on this contract type — fence languages are deliberately
+ * prohibited — so there is nothing to render beyond the text.
+ * `text` carries no `.min(1)`: an empty code block renders as an
+ * empty `<code></code>`, which is meaningful rather than an error. */
+import type { z } from 'zod';
+import type { Block } from '../../contract/blocks.ts';
+
+type Props = Omit<Extract<z.infer<typeof Block>, { type: 'code' }>, 'type'>;
+
+const { text } = Astro.props as Props;
+---
+<pre class="wp-block-code"><code>{text}</code></pre>

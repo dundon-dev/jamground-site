@@ -1,0 +1,16 @@
+---
+/* Root 404 page. Default-locale fallback for requests to /404.html
+ * and undefined routes outside any locale. */
+import { settings } from '../content.config';
+import { pathForHome } from '../lib/links';
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+---
+
+<BaseLayout title="Page not found" locale={settings.defaultLocale} bodyClass="is-error">
+  <div class="site-error site-container">
+    <h1>Page not found</h1>
+    <p>The page you are looking for could not be found.</p>
+    <a class="site-button" href={pathForHome(settings.defaultLocale)}>Return to home</a>
+  </div>
+</BaseLayout>

@@ -1,0 +1,28 @@
+---
+# group_vars/all.yml — the deployment's identity, declared once for the deploy-time half.
+#
+# Loaded automatically for every play run against this inventory, converge and verify alike,
+# because it sits beside inventory.yml. That matters for the verify playbooks: each of them
+# used to repeat these strings as literals with the recorded reason "a verify must not depend
+# on a converge-time variable it never loads". The reason was sound and the fact it rested on
+# is no longer true — a group_vars file is not a converge-time variable, it is inventory data
+# every play loads before its first task, so verify/*.yml can now reference these names
+# without depending on any role's defaults having been read.
+#
+# These six are the SAME six declared in jamground.config.mjs at the repository root, which
+# is the build-time half. Two files declare them because the two halves genuinely run at
+# different times, on different machines, with no shared runtime; `tools/check-config.mjs`
+# (Rule A) compares them value for value and fails the build if they ever disagree, so the
+# duplication cannot become a divergence.
+#
+# The VPS address, ssh user and ssh key are NOT here. They belong to the operator's machine,
+# not to the fork, and are read from the environment by inventory.yml.
+jamground_domain: example.com
+jamground_github_org: your-org
+jamground_site_repo: jamground-site
+jamground_content_repo: jamground-content
+jamground_content_branch: main
+
+# Public by design and carried in git. The client SECRET is
+# never here, never templated, and never leaves the box: roles/broker is told only its path.
+jamground_oauth_client_id: Ov23liEXAMPLE0CLIENT

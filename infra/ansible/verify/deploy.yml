@@ -1,0 +1,114 @@
+---
+# Three things to prove: current is a real symlink into releases/ (never dangling — a dangling
+# root is a 500 on every request), previous exists once there have been two releases and not
+# before (this task itself seeds only one), and the deploy mechanism — the script plus its two
+# privileged wrappers — is present and executable, since a deploy is only as real as what it
+# flips through.
+#
+# The domain-agnostic paths are repeated here rather than sourced from roles/deploy/defaults,
+# the same way verify/nginx.yml repeats nginx_domain: a verify playbook must not depend on a
+# converge-time variable it never loads.
+- name: Verify the release directories and the symlink flip
+  hosts: jamground
+  gather_facts: false
+  vars:
+    deploy_root: /srv/jamground
+    deploy_releases_dir: /srv/jamground/releases
+  tasks:
+    - name: Stat current
+      ansible.builtin.stat:
+        path: "{{ deploy_root }}/current"
+      register: deploy_current_stat
+
+    - name: Assert current is a symlink
+      ansible.builtin.assert:
+        that:
+          - deploy_current_stat.stat.exists
+          - deploy_current_stat.stat.islnk
+        fail_msg: "{{ deploy_root }}/current does not exist or is not a symlink"
+
+    - name: Resolve what current points at
+      ansible.builtin.command: readlink -f {{ deploy_root }}/current
+      register: deploy_current_target
+      check_mode: false
+      changed_when: false
+
+    - name: Assert current resolves into releases/
+      ansible.builtin.assert:
+        that:
+          - deploy_current_target.stdout is search(deploy_releases_dir)
+        fail_msg: >-
+          {{ deploy_root }}/current resolves to {{ deploy_current_target.stdout }}, outside
+          {{ deploy_releases_dir }}
+
+    - name: Count release directories
+      ansible.builtin.find:
+        paths: "{{ deploy_releases_dir }}"
+        file_type: directory
+      register: deploy_release_dirs
+
+    - name: Stat previous
+      ansible.builtin.stat:
+        path: "{{ deploy_root }}/previous"
+      register: deploy_previous_stat
+
+    - name: Assert previous exists once there have been two releases
+      ansible.builtin.assert:
+        that:
+          - (deploy_release_dirs.matched | int) < 2 or deploy_previous_stat.stat.exists
+        fail_msg: >-
+          {{ deploy_release_dirs.matched }} release directories exist but
+          {{ deploy_root }}/previous does not
+
+    - name: Stat the deploy script
+      ansible.builtin.stat:
+        path: /usr/local/bin/jamground-deploy
+      register: deploy_script_stat
+
+    - name: Assert the deploy script is present and executable
+      ansible.builtin.assert:
+        that:
+          - deploy_script_stat.stat.exists
+          - deploy_script_stat.stat.executable
+        fail_msg: /usr/local/bin/jamground-deploy does not exist or is not executable
+
+    - name: Stat the release-switch wrapper
+      ansible.builtin.stat:
+        path: /usr/local/sbin/jamground-release-switch
+      register: deploy_release_switch_stat
+
+    - name: Assert the release-switch wrapper is present and executable
+      ansible.builtin.assert:
+        that:
+          - deploy_release_switch_stat.stat.exists
+          - deploy_release_switch_stat.stat.executable
+        fail_msg: /usr/local/sbin/jamground-release-switch does not exist or is not executable
+
+    - name: Stat the reload-nginx wrapper
+      ansible.builtin.stat:
+        path: /usr/local/sbin/jamground-reload-nginx
+      register: deploy_reload_nginx_stat
+
+    - name: Assert the reload-nginx wrapper is present and executable
+      ansible.builtin.assert:
+        that:
+          - deploy_reload_nginx_stat.stat.exists
+          - deploy_reload_nginx_stat.stat.executable
+        fail_msg: /usr/local/sbin/jamground-reload-nginx does not exist or is not executable
+
+    # The build finds content/ only through JAMGROUND_CONTENT_DIR. This is a state
+    # assertion about the DEPLOYED script — not a log grep, and not a rerun of the build — so a
+    # regression that drops the export is caught even between real deploys. Proving end to end
+    # that the build then finds content/ is a separate role's job.
+    - name: Read the shipped deploy script back off the box
+      ansible.builtin.slurp:
+        path: /usr/local/bin/jamground-deploy
+      register: deploy_script_slurp
+
+    - name: Assert the shipped script sets JAMGROUND_CONTENT_DIR for the build
+      ansible.builtin.assert:
+        that:
+          - "'JAMGROUND_CONTENT_DIR' in (deploy_script_slurp.content | b64decode)"
+        fail_msg: >-
+          /usr/local/bin/jamground-deploy does not set JAMGROUND_CONTENT_DIR; the build has no
+          way to locate content/ (OD-29)

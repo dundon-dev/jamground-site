@@ -1,0 +1,24 @@
+---
+# Proof of concept: verify that the control node can reach and manage the target.
+# This playbook uses only assert: and ping, no command/shell/raw/script which check mode skips.
+- name: Verify jamground host is reachable and configured correctly
+  hosts: jamground
+  gather_facts: true
+  tasks:
+    - name: Ping the host
+      ansible.builtin.ping:
+
+    - name: Assert distribution is Debian 13
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "Debian"
+          - ansible_distribution_version is version("13", ">=")
+          - ansible_distribution_version is version("14", "<")
+        fail_msg: "Host is not Debian 13; found {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: Assert Python interpreter resolved
+      ansible.builtin.assert:
+        that:
+          - ansible_python_interpreter is defined
+          - ansible_python_interpreter != ""
+        fail_msg: "Python interpreter not resolved: {{ ansible_python_interpreter | default('undefined') }}"

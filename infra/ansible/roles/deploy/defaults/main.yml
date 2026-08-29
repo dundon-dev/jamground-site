@@ -1,0 +1,15 @@
+---
+# These paths, defined once. jamground-deploy (shipped by this role) reads the same paths
+# as literal /srv/jamground strings rather than as Ansible variables — a script that must run
+# with no control node in the loop cannot template itself at deploy time — so a change here
+# must be mirrored in files/jamground-deploy and files/jamground-release-switch by hand.
+deploy_root: /srv/jamground
+deploy_releases_dir: "{{ deploy_root }}/releases"
+deploy_current: "{{ deploy_root }}/current"
+deploy_previous: "{{ deploy_root }}/previous"
+deploy_script_path: /usr/local/bin/jamground-deploy
+
+# The one release this role itself seeds, so `current` is never a dangling symlink before
+# the first real build. Named in the same `<utc>-<contentSha7>-<siteSha7>` shape a real
+# release uses, with obviously-fake SHAs so it can never be mistaken for one.
+deploy_seed_release: "19700101T000000Z-seed000-seed000"

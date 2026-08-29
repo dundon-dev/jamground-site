@@ -1,0 +1,39 @@
+{
+  "name": "jamground-site",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Jamground \u2014 a Jamstack site whose content lives as schema-validated files in git.",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "astro build",
+    "dev": "astro dev",
+    "preview": "astro preview",
+    "postinstall": "npm run editor:install",
+    "test": "npm run check:config && npm run test:config && npm run test:conformance && npm run test:gates && npm run test:contract && npm run test:hooks && npm run test:broker && npm run test:editor",
+    "test:infra": "npm run check:playbooks && npm run test:playbooks",
+    "check:config": "node tools/check-config.mjs",
+    "test:config": "node --test 'test/tools/check-config.test.mjs'",
+    "check:playbooks": "node tools/check-playbooks.mjs",
+    "check:seed": "node tools/check-seed-canonical.mjs",
+    "test:conformance": "node --test 'test/conformance/**/*.test.mjs'",
+    "test:gates": "node --test 'test/gates/**/*.test.mjs'",
+    "test:contract": "node --test 'test/blocks/**/*.test.mjs' 'test/contract/**/*.test.mjs' test/media.test.mjs",
+    "test:hooks": "node --test 'infra/hooks/test/**/*.test.mjs'",
+    "test:playbooks": "node --test 'test/tools/check-playbooks.test.mjs'",
+    "test:broker": "node --test 'infra/broker/test/**/*.test.mjs'",
+    "test:editor": "npm --prefix editor test",
+    "editor:install": "cd editor && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci"
+  },
+  "dependencies": {
+    "astro": "7.2.2",
+    "remark-gfm": "4.0.1",
+    "remark-parse": "11.0.0",
+    "remark-stringify": "11.0.0",
+    "unified": "11.0.5",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
+  }
+}

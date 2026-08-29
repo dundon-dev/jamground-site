@@ -1,0 +1,32 @@
+# {{ ansible_managed }}
+#
+# The auth broker — the entire server-side surface of the system. Stateless by
+# construction: no database, no session, no cache, no file of its own, so ProtectSystem=strict
+# needs no ReadWritePaths at all. The only thing the process opens after start is the
+# operator-placed Client secret (OAUTH_CLIENT_SECRET_FILE), read once and never logged.
+#
+# Binds 127.0.0.1 only (run.mjs) — the sole path in is roles/editor_shell's proxy on the edit
+# vhost, never a public listener of its own.
+
+[Unit]
+Description=jamground auth broker
+After=network.target
+
+[Service]
+Type=simple
+User={{ broker_user }}
+Group={{ broker_user }}
+Environment=OAUTH_CLIENT_ID={{ broker_client_id }}
+Environment=OAUTH_CLIENT_SECRET_FILE={{ broker_secret_file }}
+Environment=SHELL_ORIGIN={{ broker_allowed_origin }}
+Environment=PORT={{ broker_port }}
+ExecStart=/usr/local/bin/node {{ broker_app_dir }}/run.mjs
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

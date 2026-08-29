@@ -1,0 +1,56 @@
+# {{ ansible_managed }}
+#
+# The edit vhost — a conf.d drop-in, not an edit to roles/nginx's nginx.conf.j2. That template's
+# own header says conf.d is included for exactly this: a role converging after nginx (the editor
+# shell, the webhook receiver) adding a vhost without touching the file nginx role manages
+# wholesale.
+#
+# Reuses the wildcard certificate roles/certificates already issued for
+# *.{{ jamground_domain }} — this role requests nothing new. The TLS server block is conditional
+# on the certificate actually being on disk, the same guard roles/nginx's own template uses:
+# naming a certificate file that is not there fails `nginx -t` on the very next converge, and
+# there is no console to recover a box wedged on that.
+#
+# No `listen [::]` — infra/RUNBOOK.md §The-environment records this host as having no IPv6.
+
+server {
+    listen 80;
+    server_name {{ editor_shell_domain }};
+
+    root {{ editor_shell_root }};
+    index index.html;
+
+    # The auth broker (roles/broker) — the shell's only server-side call. Exact
+    # match so it takes precedence over `location /` regardless of listing order, and so a
+    # request the broker itself rejects (missing parameters, a foreign origin) is proxied
+    # through rather than 404ing here first.
+    location = /token {
+        proxy_pass http://127.0.0.1:{{ broker_port }}/token;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+{% if editor_shell_cert_stat.stat.exists %}
+
+server {
+    listen 443 ssl;
+    server_name {{ editor_shell_domain }};
+
+    ssl_certificate {{ editor_shell_cert_dir }}/fullchain.pem;
+    ssl_certificate_key {{ editor_shell_cert_dir }}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    root {{ editor_shell_root }};
+    index index.html;
+
+    location = /token {
+        proxy_pass http://127.0.0.1:{{ broker_port }}/token;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+{% endif %}

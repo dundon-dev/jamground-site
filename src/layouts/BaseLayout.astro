@@ -1,0 +1,66 @@
+---
+/* The one document shell. Before this, all eight routes inlined their own <!DOCTYPE html>
+ * with a <title> and nothing else, and the site had no stylesheet at all.
+ *
+ * WHY CHROME LIVES IN src/layouts/ AND NOT src/components/: everything under
+ * src/components/ is compiled by test/blocks/*.test.mjs, which uses @astrojs/compiler-rs and
+ * astro/container with NO Vite, and asserts exact whole-string HTML equality on the eleven
+ * block components. A CSS import or a <style> block in there fails to compile in that
+ * harness, and Astro's injected astro-xxxx scope class breaks the string assertions. Keeping
+ * chrome in a separate directory makes "no CSS import, no <style> block, ever" a
+ * DIRECTORY-LEVEL invariant instead of a per-file discipline. This file is the only one in
+ * the repo that imports a stylesheet.
+ *
+ * The five imports are the cascade order. Astro bundles them into one hashed file under
+ * _astro/ and injects the <link> into the <head> below — nothing here emits it by hand.
+ * design/ is the single home for every style byte, rather than a copy under public/, so
+ * there is exactly one file to keep in sync. */
+import '../../design/tokens.css';
+import '../../design/base.css';
+import '../../design/blocks/hero.css';
+import '../../design/blocks/feature-grid.css';
+import '../../design/blocks/cta.css';
+
+import { settings } from '../content.config';
+import SiteHeader from './SiteHeader.astro';
+import SiteFooter from './SiteFooter.astro';
+
+type Props = {
+  /** The page-specific part of <title>; the site name is appended here. */
+  title: string;
+  /** Emitted only when present, exactly as the routes did it. */
+  description?: string;
+  /** BCP-47 as the entity carries it ('en-US'). Drives <html lang>, the navigation lookup,
+   *  and every URL the chrome builds. Not a separate `lang` prop — it IS the locale. */
+  locale: string;
+  bodyClass?: string;
+};
+
+const { title, description, locale, bodyClass } = Astro.props as Props;
+
+/* seo.title is author-written and capped at 70 characters, and the seed content
+ * writes the site name into it ("Pricing — Jamground"). Appending unconditionally produced
+ * "Pricing — Jamground — Jamground", so the suffix is added only when it is not already
+ * there. The alternative — a second prop saying "this title is complete" — pushes the
+ * decision onto all eight routes to answer identically. */
+const documentTitle = title.includes(settings.siteName)
+  ? title
+  : `${title} — ${settings.siteName}`;
+---
+<!DOCTYPE html>
+<html lang={locale}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{documentTitle}</title>
+    {description && <meta name="description" content={description} />}
+  </head>
+  <body class={bodyClass}>
+    <a class="site-skip" href="#site-main">Skip to content</a>
+    <SiteHeader locale={locale} />
+    <main class="site-main" id="site-main">
+      <slot />
+    </main>
+    <SiteFooter />
+  </body>
+</html>

@@ -1,0 +1,159 @@
+---
+# `infra/hooks/` is application code; this role is the courier that puts it on the box —
+# a systemd unit running as jamground-build, the queue/marker/lock directory it writes into, and
+# a secret this role never invents on GitHub's side without also telling GitHub what it invented.
+# The secret's own value never crosses onto a GitHub-held credential: only its hex digits go to
+# `gh`, over the control node's own session (`delegate_to: localhost`, the same boundary
+# roles/content_repos already holds so a GitHub-writable credential never reaches the box).
+#
+# `hooks.{{ webhook_domain }}` already has a certificate — roles/certificates covers it under the
+# same wildcard as `edit` and the bare `preview` label — but the reverse proxy that would make it
+# actually reachable is a separate task's job (roles/nginx's `conf.d` is there for exactly this).
+# This role ships live and unused in the same shape `infra/hooks/server.mjs` already documents
+# for the queue it writes: the receiver runs, answers requests on its own port, and the webhook
+# is registered — nothing yet routes a real GitHub delivery to it.
+
+- name: Ensure /etc/jamground exists
+  ansible.builtin.file:
+    path: /etc/jamground
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Ensure the webhook application directory exists
+  ansible.builtin.file:
+    path: "{{ webhook_app_dir }}"
+    state: directory
+    owner: jamground-build
+    group: jamground-build
+    mode: '0755'
+
+- name: Ship infra/hooks/ — the receiver's application code
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../hooks/"
+    dest: "{{ webhook_app_dir }}/"
+    owner: jamground-build
+    group: jamground-build
+  notify: restart webhook
+
+- name: Ensure the webhook's queue/marker/lock state directory exists
+  ansible.builtin.file:
+    path: "{{ webhook_state_dir }}"
+    state: directory
+    owner: jamground-build
+    group: jamground-build
+    mode: '0750'
+
+- name: Check whether the HMAC secret already exists
+  ansible.builtin.stat:
+    path: "{{ webhook_secret_file }}"
+  register: webhook_secret_stat
+
+# Only ever runs once: a later converge sees the file already present and skips this block —
+# the same one-shot-seed shape roles/deploy uses for its placeholder release. Regenerating the
+# value on every converge would desync the box's secret from whatever GitHub was last told.
+- name: Generate the HMAC secret when it does not exist yet
+  when: not webhook_secret_stat.stat.exists
+  block:
+    - name: Generate 32 random bytes, hex-encoded
+      ansible.builtin.command: openssl rand -hex 32
+      register: webhook_secret_generated
+      check_mode: false
+      changed_when: true
+      no_log: true
+
+    - name: Write the secret — root-owned, group-readable by the service account only
+      ansible.builtin.copy:
+        dest: "{{ webhook_secret_file }}"
+        content: "{{ webhook_secret_generated.stdout }}"
+        owner: root
+        group: jamground-build
+        mode: '0640'
+      no_log: true
+
+- name: Read the secret back, to keep GitHub's copy in step with the box's
+  ansible.builtin.slurp:
+    src: "{{ webhook_secret_file }}"
+  register: webhook_secret_slurp
+  no_log: true
+
+- name: Install the webhook systemd unit
+  ansible.builtin.template:
+    src: jamground-webhook.service.j2
+    dest: "/etc/systemd/system/{{ webhook_service_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart webhook
+
+- name: Ensure the webhook service is enabled and running
+  ansible.builtin.systemd:
+    name: "{{ webhook_service_name }}"
+    daemon_reload: true
+    state: started
+    enabled: true
+
+# Registration happens with `delegate_to: localhost` throughout, the same as
+# roles/content_repos: `gh`'s own session never leaves the control node, and the box
+# never sees a GitHub credential capable of writing anything.
+
+- name: Find any webhook already registered against this URL
+  ansible.builtin.command:
+    argv:
+      - gh
+      - api
+      - "repos/{{ webhook_github_org }}/{{ webhook_github_repo }}/hooks"
+      - --jq
+      - '.[] | select(.config.url=="{{ webhook_url }}") | .id'
+  register: webhook_existing
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: false
+
+- name: Build the webhook configuration GitHub is told about
+  ansible.builtin.set_fact:
+    webhook_config_json: >-
+      {{ {'name': 'web', 'active': true, 'events': webhook_events,
+          'config': {'url': webhook_url, 'content_type': 'json',
+                     'secret': (webhook_secret_slurp.content | b64decode | trim),
+                     'insecure_ssl': '0'}} | to_json }}
+  no_log: true
+
+- name: Register the webhook when none exists yet
+  ansible.builtin.command:
+    argv:
+      - gh
+      - api
+      - -X
+      - POST
+      - "repos/{{ webhook_github_org }}/{{ webhook_github_repo }}/hooks"
+      - --input
+      - "-"
+    stdin: "{{ webhook_config_json }}"
+  when: webhook_existing.stdout_lines | length == 0
+  delegate_to: localhost
+  become: false
+  changed_when: true
+  no_log: true
+
+# GitHub never echoes a webhook's secret back, so the only way to keep the two in step is to
+# tell it again — every converge, not just the first. "Never log tokens" is
+# why this task, and the one above, are `no_log: true`.
+- name: Keep the existing webhook's secret in step with the box's
+  ansible.builtin.command:
+    argv:
+      - gh
+      - api
+      - -X
+      - PATCH
+      - "repos/{{ webhook_github_org }}/{{ webhook_github_repo }}/hooks/{{ webhook_existing.stdout_lines[0] }}"
+      - --input
+      - "-"
+    stdin: "{{ webhook_config_json }}"
+  when: webhook_existing.stdout_lines | length > 0
+  delegate_to: localhost
+  become: false
+  changed_when: true
+  no_log: true

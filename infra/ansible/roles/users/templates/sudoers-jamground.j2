@@ -1,0 +1,8 @@
+# Managed by Ansible (roles/users) — do not edit on the box, changes will be overwritten.
+#
+# Two fixed commands, no arguments accepted anywhere in either line — there is no path or
+# option injection surface for jamground to widen: the privileged half —
+# flipping the symlink, reloading nginx — belongs to a separate orchestrator user holding two
+# no-argument sudo wrappers.
+jamground ALL=(root) NOPASSWD: {{ jamground_release_switch }}
+jamground ALL=(root) NOPASSWD: {{ jamground_reload_nginx }}

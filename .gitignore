@@ -1,0 +1,21 @@
+node_modules/
+dist/
+editor/dist/
+.astro/
+*.log
+.DS_Store
+.env
+.env.*
+# ...but NOT the committed placeholder. `.env.*` above swallows `.env.example`, and a
+# swallowed placeholder never reaches a clone — "green from a clean clone" would then be
+# false while looking true, which is the failure mode this tree refuses. Verified with
+# `git check-ignore -v .env.example`, which must exit 1.
+!.env.example
+
+# The content repository, when cloned inside this tree.
+# The security argument for keeping code and content separate depends on editor-writable
+# bytes never sitting beside build config; an accidental `git add` here would defeat it
+# silently. The default
+# location is a sibling directory (`../jamground-content`, JAMGROUND_CONTENT_DIR),
+# but a clone placed here must not be committable back into the wrong repository.
+/content

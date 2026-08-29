@@ -1,0 +1,101 @@
+# {{ ansible_managed }}
+#
+# Managed wholesale by the nginx role, so `validate: nginx -t -c %s` tests the whole live
+# config rather than a fragment that could never pass on its own. `conf.d` is included for
+# roles that converge after this one (the editor shell, the webhook receiver) so they can add a
+# vhost without editing this file.
+#
+# No `listen [::]` anywhere: infra/RUNBOOK.md §The-environment records this host as having no
+# IPv6 at all, and `nginx -t` does not catch a bind failure on a real reload the way it catches
+# a syntax error — only the converge does, and there is no console to recover a box wedged on
+# a bad reload.
+
+user www-data;
+pid /run/nginx.pid;
+worker_processes auto;
+
+events {
+    worker_connections 768;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    sendfile on;
+    tcp_nopush on;
+    keepalive_timeout 65;
+
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+
+    include /etc/nginx/conf.d/*.conf;
+
+    # ---- production: {{ nginx_domain }} -----------------------------------------------------
+    server {
+        listen 80;
+        server_name {{ nginx_domain }};
+
+        root {{ nginx_release_root }}/public;
+        index index.html;
+
+        location = / { return 301 /en-us/; }    # from Settings.defaultLocale
+
+        location / {
+            try_files $uri $uri/ =404;
+        }
+    }
+{% if jamground_cert_stat.stat.exists %}
+
+    server {
+        listen 443 ssl;
+        server_name {{ nginx_domain }};
+
+        ssl_certificate {{ nginx_cert_dir }}/fullchain.pem;
+        ssl_certificate_key {{ nginx_cert_dir }}/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+
+        root {{ nginx_release_root }}/public;
+        index index.html;
+
+        location = / { return 301 /en-us/; }    # from Settings.defaultLocale
+
+        location / {
+            try_files $uri $uri/ =404;
+        }
+    }
+{% endif %}
+
+    # ---- previews: live and empty ------------------------------------------------------------
+    # Activating a preview is a mkdir and an environment variable against this block, never a
+    # reload: the digit-only named capture is the whole path-traversal guard, because $prnum
+    # can never contain `/` or `..`.
+    server {
+        listen 80;
+        server_name ~^pr-(?<prnum>[0-9]+)\.preview\.{{ nginx_domain | regex_escape }}$;
+
+        root {{ nginx_previews_root }}/$prnum;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ =404;
+        }
+    }
+{% if jamground_cert_stat.stat.exists %}
+
+    server {
+        listen 443 ssl;
+        server_name ~^pr-(?<prnum>[0-9]+)\.preview\.{{ nginx_domain | regex_escape }}$;
+
+        ssl_certificate {{ nginx_cert_dir }}/fullchain.pem;
+        ssl_certificate_key {{ nginx_cert_dir }}/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+
+        root {{ nginx_previews_root }}/$prnum;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ =404;
+        }
+    }
+{% endif %}
+}

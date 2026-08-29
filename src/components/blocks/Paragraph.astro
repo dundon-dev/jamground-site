@@ -1,0 +1,15 @@
+---
+/* core/paragraph. Core-derived; markup is OBSERVED from core's own save.js
+ * (@wordpress/block-library src/paragraph/save.js), not
+ * authored — reproduced exactly rather than re-decided here. No wrapper class: the markup
+ * contract names only `<p>`.
+ * Props follow the Paragraph member of the Block union, imported by relative .ts
+ * path from ../../contract/blocks.ts, not re-derived. */
+import type { z } from 'zod';
+import type { Block } from '../../contract/blocks.ts';
+
+type Props = Omit<Extract<z.infer<typeof Block>, { type: 'paragraph' }>, 'type'>;
+
+const { text } = Astro.props as Props;
+---
+<p>{text}</p>

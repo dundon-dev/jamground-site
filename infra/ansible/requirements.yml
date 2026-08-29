@@ -1,0 +1,12 @@
+# Exact versions, never ranges. The pins here are what the recorded proofs were produced against;
+# a minor bump in a collection changes module defaults and breaks a converge silently.
+#
+# ansible-core itself is pinned separately, not here — requirements.yml cannot pin its own
+# runtime. It is 2.20.1, and `tools/check-playbooks.mjs` reports the version it actually ran under.
+collections:
+  - name: ansible.posix
+    version: 2.1.0
+  - name: community.general
+    version: 12.1.0
+  - name: community.crypto
+    version: 3.0.5

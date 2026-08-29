@@ -1,0 +1,16 @@
+---
+# Shared with roles/nginx (nginx_domain there is the same string) and with
+# verify/certificates.yml. All three now build the name from `jamground_domain` in
+# group_vars/all.yml rather than each holding its own literal — inventory data, loaded before
+# any play's first task, so the verify still depends on no converge-time variable while no
+# longer being able to check a domain the converge stopped serving.
+#
+# certificates_cert_name MUST equal certificates_domain: certbot names the live directory after
+# --cert-name, not after any -d argument, and roles/nginx's `nginx_cert_dir` is built from
+# nginx_domain. A mismatch here is a live TLS outage nginx renders silently around (the stat
+# check just skips the TLS server blocks) rather than a failure either playbook would report.
+certificates_domain: "{{ jamground_domain }}"
+certificates_cert_name: "{{ certificates_domain }}"
+certificates_acme_credentials: /etc/jamground/acme/dns.ini
+certificates_propagation_seconds: 30
+certificates_live_dir: "/etc/letsencrypt/live/{{ certificates_cert_name }}"

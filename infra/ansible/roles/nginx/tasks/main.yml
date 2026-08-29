@@ -1,0 +1,40 @@
+---
+# The whole of the box's web serving: the / -> /en-us/ redirect (from
+# Settings.defaultLocale), static file serving via try_files, and a preview server block that
+# ships LIVE AND EMPTY — activating a preview is just a mkdir and an environment variable,
+# nothing more, and nginx is never reloaded for a single preview coming or going.
+#
+# This role converges BEFORE any certificate exists — roles/certificates runs after it — so
+# the TLS server blocks in the template are conditional on a stat fact rather than unconditionally
+# present. A template referencing a certificate file that is not yet on disk fails `nginx -t` on
+# the very first converge, which would block the certificate task that would otherwise fix it.
+
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+
+- name: Check whether the live certificate exists yet
+  ansible.builtin.stat:
+    path: "{{ nginx_cert_dir }}/fullchain.pem"
+  register: jamground_cert_stat
+
+- name: Render the nginx configuration
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    owner: root
+    group: root
+    mode: '0644'
+    # A syntax error dropped straight onto the box's only web server has no console to recover
+    # it from — validate against a rendered temp copy first, same reasoning as roles/users'
+    # `visudo -cf %s`.
+    validate: 'nginx -t -c %s'
+  notify: reload nginx
+
+- name: Ensure nginx is enabled and running
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: true

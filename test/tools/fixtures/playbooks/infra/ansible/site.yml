@@ -1,0 +1,4 @@
+- name: A healthy play
+  hosts: jamground
+  roles:
+    - demo

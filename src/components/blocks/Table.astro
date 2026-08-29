@@ -1,0 +1,32 @@
+---
+/* core/table. Markup observed from core's own save.js (src/table/save.js):
+ * `has-fixed-layout` is unconditional here because this contract has no
+ * `hasFixedLayout` toggle to turn it off, matching the markup contract table exactly.
+ * `head`/`rows` are always non-empty (`.min(1)` on both), so `<thead>`/`<tbody>` are
+ * unconditional too — core's own `save.js` omits an empty section, a case this contract
+ * cannot produce. No `<tfoot>`: this contract has no `foot` field. Cells carry no
+ * scope/align/span attributes — core only emits those when its own richer cell shape sets
+ * them, and this contract's cells are plain `InlineText`. No merged cells. */
+import type { z } from 'zod';
+import type { Block } from '../../contract/blocks.ts';
+
+type Props = Omit<Extract<z.infer<typeof Block>, { type: 'table' }>, 'type'>;
+
+const { head, rows } = Astro.props as Props;
+---
+<figure class="wp-block-table">
+  <table class="has-fixed-layout">
+    <thead>
+      <tr>
+        {head.map((cell) => <th>{cell}</th>)}
+      </tr>
+    </thead>
+    <tbody>
+      {rows.map((row) => (
+        <tr>
+          {row.map((cell) => <td>{cell}</td>)}
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</figure>

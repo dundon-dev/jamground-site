@@ -1,0 +1,14 @@
+---
+# Shares the certificate location and domain shape with roles/nginx and roles/certificates.
+# All three now build their names from the inventory-wide `jamground_domain` instead of each
+# repeating the literal: a role must not depend on ANOTHER ROLE's converge-time variable, but
+# group_vars is not a role, so this is safe.
+#
+# The certificate is already provisioned; the vhost is not: the wildcard
+# SAN *.<domain> already covers edit.<domain> (infra/RUNBOOK.md §The-environment), so this role
+# only has to serve the name — it requests nothing new.
+editor_shell_domain: "edit.{{ jamground_domain }}"
+editor_shell_cert_dir: "/etc/letsencrypt/live/{{ jamground_domain }}"
+editor_shell_conf_path: /etc/nginx/conf.d/edit.conf
+# Populated by this role's own copy task below, from the built editor/dist/ bundle.
+editor_shell_root: /srv/editor-shell

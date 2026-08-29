@@ -1,0 +1,112 @@
+---
+# What the two clones actually CONTAIN, not merely that they exist — a placeholder or
+# fabricated tree used to compensate for an unpublished default branch would pass a mere
+# existence check, and this is what would catch it if either publish ever regressed to one.
+# State
+# assertions only — `stat:` and `slurp:` feeding `assert:` — never `command:`, because a shell
+# result can be made to lie about the tree in a way a stat of the tree itself cannot.
+#
+# The checkout paths are repeated here rather than sourced from roles/content_repos/defaults:
+# a verify playbook must not depend on a converge-time variable it never loads.
+- name: Verify the two clones hold real, buildable trees
+  hosts: jamground
+  gather_facts: false
+  vars:
+    content_repos_site_checkout: /srv/jamground/repos/site
+    content_repos_content_checkout: /srv/jamground/repos/content
+  tasks:
+    - name: Stat the site repository's astro.config.mjs
+      ansible.builtin.stat:
+        path: "{{ content_repos_site_checkout }}/astro.config.mjs"
+      register: content_repos_site_astro_config_stat
+
+    - name: Assert astro.config.mjs is present in the site clone
+      ansible.builtin.assert:
+        that:
+          - content_repos_site_astro_config_stat.stat.exists
+          - content_repos_site_astro_config_stat.stat.isreg
+        fail_msg: >-
+          {{ content_repos_site_checkout }}/astro.config.mjs does not exist — the site clone is
+          not the published site repository's tree.
+
+    - name: Stat the site repository's src/ directory
+      ansible.builtin.stat:
+        path: "{{ content_repos_site_checkout }}/src"
+      register: content_repos_site_src_stat
+
+    - name: Assert src/ is present in the site clone
+      ansible.builtin.assert:
+        that:
+          - content_repos_site_src_stat.stat.exists
+          - content_repos_site_src_stat.stat.isdir
+        fail_msg: "{{ content_repos_site_checkout }}/src does not exist or is not a directory"
+
+    - name: Slurp the site repository's package.json
+      ansible.builtin.slurp:
+        path: "{{ content_repos_site_checkout }}/package.json"
+      register: content_repos_site_package_json
+
+    - name: Assert scripts.build is present in the site clone's package.json
+      ansible.builtin.assert:
+        that:
+          - (content_repos_site_package_json.content | b64decode | from_json).scripts.build is defined
+          - (content_repos_site_package_json.content | b64decode | from_json).scripts.build | length > 0
+        fail_msg: >-
+          {{ content_repos_site_checkout }}/package.json has no scripts.build — the clone cannot
+          be built.
+
+    - name: Stat the content repository's content/ directory
+      ansible.builtin.stat:
+        path: "{{ content_repos_content_checkout }}/content"
+      register: content_repos_content_tree_stat
+
+    - name: Assert content/ is present in the content clone
+      ansible.builtin.assert:
+        that:
+          - content_repos_content_tree_stat.stat.exists
+          - content_repos_content_tree_stat.stat.isdir
+        fail_msg: >-
+          {{ content_repos_content_checkout }}/content does not exist — the content clone is
+          still just README.md, the pre-seed tree found on the box.
+
+    # Asserted by SHAPE, never by filename. Entity filenames belong to whichever content
+    # repository this deployment points at, and a fork's will differ entirely; pinning one
+    # repository's seed names here makes the verify fail on every other for a reason that has
+    # nothing to do with the deploy. What must hold anywhere: each kind is present and
+    # non-empty, and settings/site.yaml — the one path the layout actually fixes — is a file.
+    - name: Find the entities of each kind in the content clone
+      ansible.builtin.find:
+        paths: "{{ content_repos_content_checkout }}/content/{{ item }}"
+        recurse: true
+        file_type: file
+      loop:
+        - pages
+        - posts
+        - authors
+        - navigation
+      register: content_repos_kind_finds
+
+    - name: Assert every entity kind is present and non-empty
+      ansible.builtin.assert:
+        that:
+          - item.matched | int > 0
+        fail_msg: >-
+          {{ content_repos_content_checkout }}/content/{{ item.item }} holds no entities — the
+          content clone is present but that kind is empty.
+      loop: "{{ content_repos_kind_finds.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Stat settings/site.yaml, the one path the layout fixes
+      ansible.builtin.stat:
+        path: "{{ content_repos_content_checkout }}/content/settings/site.yaml"
+      register: content_repos_settings_stat
+
+    - name: Assert settings/site.yaml is a real file
+      ansible.builtin.assert:
+        that:
+          - content_repos_settings_stat.stat.exists
+          - content_repos_settings_stat.stat.isreg
+        fail_msg: >-
+          {{ content_repos_content_checkout }}/content/settings/site.yaml does not exist — the
+          build cannot resolve its locales without it.

@@ -1,0 +1,54 @@
+---
+# Verify that Node.js v25.6.1 is installed and accessible, with both node and npm
+# resolving to the correct version.
+- name: Verify Node.js toolchain installation
+  hosts: jamground
+  gather_facts: false
+  tasks:
+    - name: Check node version
+      ansible.builtin.command: /usr/local/bin/node --version
+      register: node_version
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert node reports exactly v25.6.1
+      ansible.builtin.assert:
+        that:
+          - node_version.stdout == 'v25.6.1'
+        fail_msg: >-
+          node version is not exactly v25.6.1:
+          {{ node_version.stdout }}
+
+    - name: Check npm version
+      ansible.builtin.command: /usr/local/bin/npm --version
+      register: npm_version
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert npm resolves and is functional
+      ansible.builtin.assert:
+        that:
+          - npm_version.rc == 0
+          - npm_version.stdout != ''
+        fail_msg: >-
+          npm did not resolve or is not functional:
+          {{ npm_version.stdout }}
+          {{ npm_version.stderr }}
+
+    - name: Verify jamground-build can read node binary
+      ansible.builtin.stat:
+        path: /opt/node-v25.6.1-linux-x64/bin/node
+      register: node_binary
+      check_mode: false
+
+    - name: Assert node binary exists and is readable
+      ansible.builtin.assert:
+        that:
+          - node_binary.stat.exists
+          - node_binary.stat.isreg
+          - node_binary.stat.readable
+        fail_msg: >-
+          node binary does not exist, is not a regular file, or is not readable:
+          {{ node_binary.stat }}
