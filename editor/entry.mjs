@@ -101,6 +101,29 @@ async function installMuPlugin(client) {
   await client.writeFile(root + '/wp-content/mu-plugins/jamground.php', muPluginSource);
 }
 
+// Every fresh WordPress install ships its own seed content: a "Hello world!" post, a "Sample
+// Page", and a canned comment on the post. None of them is a Jamground entity — they carry no
+// `_jamground_id` and no `_jamground_source` — so the save path correctly declines to write
+// them anywhere, and an editor who opens one and edits it is told "there is nothing new to
+// save" about a post sitting in front of them in the list. That is a true statement about an
+// entity the editor had no reason to believe was different from the others, which makes it
+// indistinguishable from a bug.
+//
+// ORDERING IS LOAD-BEARING: this runs AFTER boot and BEFORE importPosts, which is the one
+// moment when "everything in this database is WordPress's own seed data" is certainly true.
+// Moved after the import, it would delete the imported content instead.
+async function removeDefaultContent(client) {
+  const root = await client.documentRoot;
+  const code = `<?php require '${root}/wp-load.php';
+    $ids = get_posts(['post_type' => 'any', 'post_status' => 'any', 'numberposts' => -1, 'fields' => 'ids']);
+    foreach ($ids as $id) { wp_delete_post($id, true); }
+    $cids = get_comments(['fields' => 'ids']);
+    foreach ($cids as $cid) { wp_delete_comment($cid, true); }
+    echo json_encode(['posts' => count($ids), 'comments' => count($cids)]);`;
+  const result = await client.run({ code });
+  return JSON.parse(result.text);
+}
+
 // --- Begin the OAuth flow ---
 //
 // The shell's own page never navigates. The sign-in control opens GitHub's authorize
@@ -158,7 +181,17 @@ async function boot() {
     console.log('[entry.mjs] Installing mu-plugin');
     await installMuPlugin(client);
 
-    console.log('[entry.mjs] Importing content (03 §Import-contract)');
+    console.log('[entry.mjs] Removing WordPress default content');
+    try {
+      window.jamgroundDefaultContentRemoved = await removeDefaultContent(client);
+    } catch (removeError) {
+      // Not fatal: leaving WordPress's seed posts in place is confusing, but refusing to boot
+      // over it would be worse. Recorded so the Playwright suite can assert on it.
+      console.error('[entry.mjs] Removing default content failed:', removeError);
+      window.jamgroundDefaultContentError = removeError.message;
+    }
+
+    console.log('[entry.mjs] Importing content');
     // registerCoreBlocks() has already been called at module load time to expose
     // window.wpBlocksAPI. The API is ready for use here.
     const api = { createBlock, serialize };

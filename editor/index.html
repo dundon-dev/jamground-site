@@ -46,13 +46,25 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+    /* Sits directly above the control bar and is styled as the same card. Without a
+       background of its own it rendered as bare text straight onto whatever wp-admin had
+       painted underneath, which is legible or not depending entirely on what the editor
+       happens to be looking at — and the one moment it matters most is when it is reporting
+       that an action failed. z-index is one above the controls so a long message that wraps
+       past its own box is never painted under them. */
     #jamground-status {
       position: fixed;
-      bottom: 70px;
+      bottom: 74px;
       right: 20px;
-      z-index: 10000;
-      max-width: 320px;
+      z-index: 10001;
+      max-width: 360px;
+      padding: 10px 14px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      color: #1e1e1e;
       font-size: 13px;
+      line-height: 1.4;
       font-family: system-ui, -apple-system, sans-serif;
     }
     #jamground-status:empty {
