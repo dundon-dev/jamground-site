@@ -1,0 +1,49 @@
+# {{ ansible_managed }}
+#
+# One pass over the receiver's queue: read the oldest job first, build or tear down the preview it
+# names, delete it if it was handled and move it to {{ webhook_failed_dir }} if it was not. Fired
+# about once a minute by {{ webhook_consumer_timer_name }}.
+#
+# Type=oneshot, not a daemon. The work is bursty, each job is independent, and a crash is a missed
+# tick rather than a wedged process — and it is what makes the exit code mean something: non-zero
+# here is "at least one job was quarantined", which `systemctl status` and the journal both keep
+# saying instead of scrolling past.
+#
+# User=jamground-build — the same unprivileged account the receiver and the deploy build run as,
+# holding no sudo at all. That is not incidental: it is why this process invokes
+# {{ webhook_preview_build_script }} directly rather than starting
+# jamground-preview-build@<N>.service, which would need an argument-taking sudo grant this box
+# deliberately does not have (roles/users).
+#
+# ProtectSystem=strict with four explicit ReadWritePaths. The previews root is what it publishes
+# into; the two checkouts are read for the build, and are writable because git writes the fetched
+# ref and Astro writes its caches inside the site checkout. Each of the three is `-`-prefixed:
+# roles/isolation and roles/content_repos converge AFTER this role, so on a first converge those
+# paths do not exist yet, and an unprefixed ReadWritePaths naming a missing path fails the unit
+# outright rather than starting it.
+[Unit]
+Description=jamground webhook queue consumer — one pass over the queue
+After=network.target
+
+[Service]
+Type=oneshot
+User=jamground-build
+Group=jamground-build
+Environment=HOME={{ webhook_home_dir }}
+Environment=WEBHOOK_STATE_DIR={{ webhook_state_dir }}
+Environment=WEBHOOK_QUEUE_DIR={{ webhook_queue_dir }}
+Environment=WEBHOOK_FAILED_DIR={{ webhook_failed_dir }}
+Environment=WEBHOOK_LOCKS_DIR={{ webhook_locks_dir }}
+Environment=JAMGROUND_PREVIEWS_ROOT={{ webhook_previews_root }}
+Environment=JAMGROUND_PREVIEW_BUILD={{ webhook_preview_build_script }}
+Environment=JAMGROUND_SITE_CHECKOUT={{ webhook_site_checkout }}
+Environment=JAMGROUND_CONTENT_CHECKOUT={{ webhook_content_checkout }}
+ExecStart=/usr/local/bin/node {{ webhook_app_dir }}/consume.mjs
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths={{ webhook_state_dir }}
+ReadWritePaths=-{{ webhook_previews_root }}
+ReadWritePaths=-{{ webhook_site_checkout }}
+ReadWritePaths=-{{ webhook_content_checkout }}

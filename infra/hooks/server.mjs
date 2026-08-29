@@ -3,8 +3,9 @@
  * server — the receiver as application code, deployed to the box with Ansible as courier only.
  *
  * The secret is read from a FILE, never an argument (arguments are visible in `ps`) and never
- * logged ("never log tokens"). Ships live and unused — nothing consumes the
- * queue this writes yet.
+ * logged ("never log tokens"). The queue this writes is drained by `consume.mjs`, on its own
+ * timer, in its own process: this one answers requests and stores bytes, and never blocks a
+ * delivery on a build.
  */
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';

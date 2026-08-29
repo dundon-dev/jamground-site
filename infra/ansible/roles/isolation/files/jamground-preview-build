@@ -1,0 +1,205 @@
+#!/bin/bash
+# jamground-preview-build — build ONE pull request's staging site and publish it at
+# /srv/previews/<N>, which roles/nginx already serves as https://pr-<N>.preview.<domain>/.
+#
+# Shipped and invoked the same way jamground-deploy (roles/deploy) is: Ansible puts it on the box
+# and something on the box runs it, because a preview must be buildable with no control node in
+# the loop. It takes the same shape as that script deliberately — `set -euo pipefail`, one
+# `fail()` that cleans up and exits non-zero, and the rule that a failed build NEVER becomes what
+# anyone sees.
+#
+#     jamground-preview-build <pull-request-number> [head-ref]
+#
+# The head ref is optional because the two callers know different amounts. The queue consumer
+# (infra/hooks/lib/consumer.mjs) has the pull request's actual head ref out of the webhook payload
+# and passes it. `jamground-preview-build@<N>.service` has only %i, so it passes only the number
+# and this script falls back to refs/pull/<N>/head — the ref GitHub publishes for every pull
+# request, which resolves to the same commit.
+#
+# Requires JAMGROUND_SITE_CHECKOUT and JAMGROUND_CONTENT_CHECKOUT in the environment: the two
+# already-pulled checkouts, by path, exactly as jamground-deploy takes them. _CHECKOUT and not
+# _REPO for the reason test/gates/deploy-env-names.test.mjs exists to hold: those two names mean
+# REPOSITORY NAMES to the build that runs inside this script.
+#
+# ------------------------------------------------------------------------------------------
+# HOW THIS AVOIDS DISTURBING PRODUCTION. Four separate ways, because a preview build runs on the
+# box that is serving production, out of the same two checkouts a production deploy uses.
+#
+#   1. It never writes dist/. `npm run build -- --outDir` puts the output under this preview's own
+#      work directory. jamground-deploy copies the site checkout's dist/ into a release and flips
+#      `current` onto it, so a preview that built into dist/ could be published as production —
+#      including its drafts.
+#   2. It never runs `npm ci`. Production's own deploy installs the dependency tree; this reuses
+#      it and REFUSES to build if it is missing, rather than installing. `npm ci` deletes
+#      node_modules before repopulating it, which would pull the floor out from under a production
+#      build running at the same moment.
+#   3. It never moves the content checkout off main. The pull request's ref is fetched into a
+#      private ref namespace (refs/jamground/previews/<N>) and extracted with `git archive`, so
+#      HEAD, the working tree and the branch the production build reads are all untouched.
+#   4. Preview builds are serialised against each other with an flock, because Astro's caches
+#      (.astro/, node_modules/.astro, node_modules/.vite) live in the shared site checkout and two
+#      builds interleaving in them is a corrupt build, not a slow one.
+#
+# What that leaves, stated plainly rather than papered over: a preview build and a PRODUCTION
+# build can still overlap, because jamground-deploy does not take this lock. That is safe for
+# everything a preview writes (its own work directory) and unsafe for exactly one thing — the
+# `npm ci` at the top of jamground-deploy. Today production deploys are operator-triggered, so the
+# overlap is a choice a human makes; the pass that automates them is where this lock has to become
+# a lock both scripts take. docs/ARCHITECTURE.md records that as the seam's next requirement.
+# ------------------------------------------------------------------------------------------
+#
+# Paths below are literals rather than Ansible variables — a script systemd invokes with no
+# control node in the loop cannot template itself at run time, the same call roles/deploy and
+# roles/selfcheck already make. A change to any of them must be mirrored in
+# roles/isolation/defaults/main.yml by hand.
+set -euo pipefail
+
+previews_root=/srv/previews
+work_root="$previews_root/.work"
+build_lock="$previews_root/.build.lock"
+content_key=/etc/jamground/deploy-keys/content_ed25519
+deploy_env=/etc/jamground/deploy.env
+
+usage() {
+  echo "usage: jamground-preview-build <pull-request-number> [head-ref]" >&2
+  exit 2
+}
+
+[ "$#" -ge 1 ] || usage
+
+pr="$1"
+# Digits only. This becomes a path segment under $previews_root and the thing an flock and an
+# `rm -rf` are aimed at, and roles/nginx's own server_name capture is digits-only for the same
+# reason: a value that cannot contain `/` or `..` needs no further path-traversal guard.
+case "$pr" in
+  '' | *[!0-9]*) echo "jamground-preview-build: pull-request number must be digits: $pr" >&2; exit 2 ;;
+esac
+
+ref="${2:-refs/pull/$pr/head}"
+# A ref reaches `git fetch` as an argument, so a value starting with `-` would be read as an
+# option rather than a ref. Refused, not sanitised — the same rule infra/hooks/lib/consumer.mjs
+# applies before this script is ever reached, restated here because this script is also invoked
+# by hand and by systemd.
+case "$ref" in
+  -* | '' | *' '* | *'..'*) echo "jamground-preview-build: refusing head ref: $ref" >&2; exit 2 ;;
+esac
+
+: "${JAMGROUND_SITE_CHECKOUT:?JAMGROUND_SITE_CHECKOUT must name the site repository checkout}"
+: "${JAMGROUND_CONTENT_CHECKOUT:?JAMGROUND_CONTENT_CHECKOUT must name the content repository checkout}"
+
+work="$work_root/$pr"
+
+fail() {
+  echo "jamground-preview-build: $1" >&2
+  rm -rf -- "$work"
+  exit 1
+}
+
+# The box's own copy of the deployment's identity, written by roles/deploy from the environment
+# the operator sourced their `.env` into — sourced here for the same reason jamground-deploy
+# sources it, and IF PRESENT for the same reason: a fork mid-way through its first converge must
+# still produce a coherent placeholder build rather than refusing. A preview that resolved
+# jamground.config.mjs to the committed placeholders would emit `example.com` canonical URLs and
+# exit 0, which is the shape of failure this tree refuses.
+if [ -r "$deploy_env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$deploy_env"
+  set +a
+fi
+
+# The one flag that separates a preview from production, and the only one: content collections,
+# link resolution and rendering are otherwise the identical code path (docs/ARCHITECTURE.md).
+# Drafts ON, because a pull request from the editor is very often a draft, and a preview that
+# excluded it would show the editor a page that had not changed. Exported AFTER the sourcing
+# above, which wins over anything already in this shell.
+export JAMGROUND_INCLUDE_DRAFTS=1
+
+# One preview build at a time — see this file's header, point 4. The lock is held for the whole
+# build, released by the shell exiting however it exits, and waited for rather than skipped: a
+# second delivery that arrives mid-build is work that still has to happen. The wait is the same
+# 600s roles/isolation caps a preview build's own runtime at, so waiting can never outlast the
+# build being waited for.
+mkdir -p "$previews_root"
+exec 9>"$build_lock"
+flock -w 600 9 || fail "timed out waiting for $build_lock; another preview build is still running"
+
+echo "jamground-preview-build: preview $pr from $ref"
+rm -rf -- "$work"
+mkdir -p "$work/content"
+
+# The content checkout is a MIRROR the box pulls (roles/content_repos), cloned over a read-only
+# deploy key cut for that one repository. The ansible git module sets its ssh command only for its
+# own invocations, so nothing persists into the clone for a later fetch to inherit — this names
+# the same key with the same IdentitiesOnly boundary rather than letting ssh offer whatever
+# identity it can find.
+if [ -z "${GIT_SSH_COMMAND:-}" ] && [ -r "$content_key" ]; then
+  export GIT_SSH_COMMAND="ssh -i $content_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+fi
+
+# Into a PRIVATE ref namespace, one ref per pull request: HEAD is not moved, no branch is checked
+# out, and two previews fetching at once cannot race on a shared FETCH_HEAD the way a bare
+# `git fetch origin <ref>` would.
+preview_ref="refs/jamground/previews/$pr"
+git -C "$JAMGROUND_CONTENT_CHECKOUT" fetch --no-tags --force origin "+$ref:$preview_ref" \
+  || fail "could not fetch $ref from the content repository"
+
+content_sha=$(git -C "$JAMGROUND_CONTENT_CHECKOUT" rev-parse --short=7 "$preview_ref")
+site_sha=$(git -C "$JAMGROUND_SITE_CHECKOUT" rev-parse --short=7 HEAD)
+
+# `git archive` into a directory of this preview's own: the pull request's content tree, at that
+# commit, with no .git and nothing shared with the checkout it came out of.
+git -C "$JAMGROUND_CONTENT_CHECKOUT" archive --format=tar "$preview_ref" \
+  | tar -x -C "$work/content" \
+  || fail "could not extract $preview_ref into $work/content"
+
+[ -d "$work/content/content" ] \
+  || fail "$work/content/content does not exist — $preview_ref does not look like the content repository"
+
+export JAMGROUND_CONTENT_DIR="$work/content"
+
+# Production installed these; a preview reuses them and never reinstalls. See the header, point 2.
+[ -d "$JAMGROUND_SITE_CHECKOUT/node_modules" ] \
+  || fail "$JAMGROUND_SITE_CHECKOUT/node_modules does not exist — a preview build never runs npm ci, because that would delete the tree a production build may be using"
+
+if ! ( cd "$JAMGROUND_SITE_CHECKOUT" && npm run build -- --outDir "$work/dist" ); then
+  fail "the build exited non-zero; preview $pr is unchanged"
+fi
+
+# The same two checks jamground-deploy makes before it flips `current`, for the same reason: a
+# build that exited 0 having emitted nothing is the failure mode a publish step cannot see.
+[ -d "$work/dist" ] || fail "$work/dist does not exist after a build that exited 0"
+[ -f "$work/dist/en-us/index.html" ] \
+  || fail "$work/dist/en-us/index.html does not exist; a preview is never published without it"
+
+# nginx's worker runs as www-data (roles/nginx) and only ever reads what is here.
+chmod -R u=rwX,go=rX "$work/dist"
+
+# PUBLISH. `<previews_root>/<N>` is a plain directory, not a symlink into a releases tree, so the
+# consumer's teardown — one `rm -rf` of that path — reclaims everything the preview ever occupied
+# on a fixed-size filesystem. The cost is that the swap is two renames rather than one, so the URL
+# can 404 for the microsecond between them; a symlink would make it atomic and leave orphaned
+# release directories that nothing on the teardown path can reach, which on a 10 GB image is the
+# worse trade. Both renames are within $previews_root, so both are rename(2).
+live="$previews_root/$pr"
+superseded="$work_root/.superseded-$pr"
+rm -rf -- "$superseded"
+if [ -e "$live" ]; then
+  mv -T -- "$live" "$superseded"
+fi
+if ! mv -T -- "$work/dist" "$live"; then
+  # A failed publish must leave the previous preview serving, exactly as a failed build does.
+  # Spelled as a full `if` rather than `[ … ] && mv …`: under `set -e` a false test there is a
+  # non-zero last command in this block, which would exit before fail() ever ran.
+  if [ -e "$superseded" ]; then
+    mv -T -- "$superseded" "$live" || true
+  fi
+  fail "could not publish $work/dist to $live"
+fi
+rm -rf -- "$superseded"
+
+# The work tree has served its purpose; the previews filesystem is 10 GB for every open pull
+# request at once (roles/isolation), so nothing stays that is not being served.
+rm -rf -- "$work"
+
+echo "jamground-preview-build: preview $pr published at $live (content $content_sha, site $site_sha)"

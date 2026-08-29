@@ -8,6 +8,15 @@
 # the same.
 isolation_previews_root: /srv/previews
 isolation_previews_image: /var/lib/jamground/previews.img
+
+# The preview build itself: the script this role now ships, and the two checkouts it reads. Both
+# checkout paths are roles/content_repos' own, repeated as literals under the same cross-role
+# convention as isolation_previews_root above — and the script spells them out nowhere, it takes
+# them from its environment exactly as jamground-deploy does, so the two names stay path-valued
+# and disjoint from the six jamground.config.mjs reads.
+isolation_preview_build_script: /usr/local/bin/jamground-preview-build
+isolation_site_checkout: /srv/jamground/repos/site
+isolation_content_checkout: /srv/jamground/repos/content
 # 10 GB out of the box's 197 GB disk (infra/RUNBOOK.md §The-environment) — generous next to "one
 # static root per open PR, a trivial disk budget", while still being a fixed
 # ceiling separate from / so a runaway preview build cannot block a production deploy that needs

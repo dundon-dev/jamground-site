@@ -1,11 +1,28 @@
 # {{ ansible_managed }}
 #
-# One instance per open preview — %i is the pull-request number. Ships live and unused, the
-# same shape roles/webhook's receiver and roles/nginx's preview server block already ship
-# theirs in: nothing instantiates this yet, and ExecStart is a placeholder until a real build
-# command is wired through it. MemoryMax here is per BUILD, not per slice — two instances
-# running at once still sit under jamground-preview.slice's aggregate cap, which is the number
-# actually sized against "two concurrent".
+# One instance per open preview — %i is the pull-request number, and it is the ONLY argument this
+# unit can pass, which is why files/jamground-preview-build takes the head ref as an optional
+# second argument and falls back to refs/pull/%i/head when it is absent. GitHub publishes that ref
+# for every pull request, so `systemctl start jamground-preview-build@42` is a complete command.
+#
+# ExecStart is real now. What still does NOT go through this unit is the automatic path: the queue
+# consumer (infra/hooks/lib/consumer.mjs) runs as jamground-build, and roles/users grants that
+# account no sudo at all — `systemctl start jamground-preview-build@<N>` is an argument-taking
+# privileged command, and adding it to /etc/sudoers.d/jamground would widen the one grant on this
+# box that exists precisely because it takes no arguments. The consumer therefore invokes the same
+# script directly. This unit is the hand-run and per-instance-isolated path.
+#
+# PrivateNetwork=yes is kept, and it is load-bearing for what this unit is: an instance started
+# here has loopback only, so the `git fetch` in that script reaches nothing. Through this unit the
+# build works for a ref already in the content checkout; the consumer's path, which needs the
+# network to fetch a ref pushed a second ago, runs outside it. Removing PrivateNetwork to close
+# that gap would mean giving a build that executes repository content an outbound network, which
+# is the one thing this envelope was drawn to prevent — see verify/isolation.yml, which asserts
+# the property rather than the intent.
+#
+# MemoryMax here is per BUILD, not per slice — two instances running at once still sit under
+# jamground-preview.slice's aggregate cap, which is the number actually sized against "two
+# concurrent".
 [Unit]
 Description=jamground preview build %i — per-build resource envelope
 After=network.target
@@ -19,4 +36,6 @@ MemoryMax={{ isolation_preview_build_memory_max }}
 RuntimeMaxSec={{ isolation_preview_build_runtime_max_sec }}
 PrivateNetwork=yes
 NoNewPrivileges=yes
-ExecStart=/bin/true
+Environment=JAMGROUND_SITE_CHECKOUT={{ isolation_site_checkout }}
+Environment=JAMGROUND_CONTENT_CHECKOUT={{ isolation_content_checkout }}
+ExecStart={{ isolation_preview_build_script }} %i

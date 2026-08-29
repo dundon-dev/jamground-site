@@ -66,3 +66,29 @@
         headers:
           Host: "{{ jamground_domain }}"
         status_code: 200
+
+    # The hooks vhost, asserted against the RENDERED configuration rather than the template that
+    # produced it. This is the assertion that would have caught the bug it exists for: the
+    # receiver ran, the webhook was registered, the certificate covered the name — and no
+    # server_name matched it anywhere in nginx -T's output, so every delivery fell through to the
+    # default server and GitHub recorded a 405. A template that "obviously has the block in it" is
+    # exactly what was believed at the time.
+    #
+    # The port is repeated here as a literal, the same as everywhere else under verify/: a verify
+    # playbook must not depend on a converge-time variable it never loads. The domain comes from
+    # group_vars, which every play loads as inventory data.
+    - name: Dump the whole rendered nginx configuration
+      ansible.builtin.command: nginx -T
+      register: nginx_dump
+      check_mode: false
+      changed_when: false
+
+    - name: Assert the webhook vhost is in the configuration nginx is actually running
+      ansible.builtin.assert:
+        that:
+          - nginx_dump.stdout is search('server_name\s+hooks\.' ~ (jamground_domain | regex_escape) ~ ';')
+          - nginx_dump.stdout is search('proxy_pass\s+http://127\.0\.0\.1:9000;')
+        fail_msg: >-
+          No server block matches hooks.{{ jamground_domain }}, or none proxies to the receiver's
+          port. GitHub's deliveries then reach the default server, which answers 405 to a POST —
+          and the receiver looks healthy the whole time, because nothing ever reaches it.

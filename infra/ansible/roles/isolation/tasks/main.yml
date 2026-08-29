@@ -1,10 +1,14 @@
 ---
 # Slices favour production over preview: a runaway
-# preview build must never starve the box the production deploy shares it with. The per-build
-# units ship live and unused, the same shape roles/webhook's receiver and roles/nginx's preview
-# server block already ship theirs in — ExecStart is a placeholder until the task that wires a
-# real build command through it lands, so what converges here and what verify/isolation.yml
-# checks is the resource envelope itself, not that placeholder command.
+# preview build must never starve the box the production deploy shares it with.
+#
+# The PREVIEW per-build unit is no longer a placeholder: this role now ships
+# files/jamground-preview-build and jamground-preview-build@.service invokes it with %i as the
+# pull-request number. The production per-build unit still carries ExecStart=/bin/true —
+# jamground-deploy is invoked directly, not through systemd, and wiring that up is the auto-deploy
+# pass's job. What verify/isolation.yml checks either way is the resource envelope itself, which
+# is unchanged: same slice, same account, same MemoryMax, same RuntimeMaxSec, same
+# PrivateNetwork=yes.
 #
 # jamground-production.slice and jamground-preview.slice need no explicit jamground.slice parent
 # unit: systemd derives a slice's position in the tree from its dash-separated name and creates
@@ -14,6 +18,14 @@
 # serves them from (nginx_previews_root, repeated here as isolation_previews_root — the same
 # cross-role convention every shared path in this repo already follows) so a preview build
 # filling its own disk cannot also block a production deploy that needs space on /.
+
+- name: Ship the preview build script — the command the per-build unit now actually runs
+  ansible.builtin.copy:
+    src: jamground-preview-build
+    dest: "{{ isolation_preview_build_script }}"
+    owner: root
+    group: root
+    mode: '0755'
 
 - name: Ship the production slice — favoured
   ansible.builtin.template:

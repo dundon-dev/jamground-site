@@ -1,8 +1,9 @@
 ---
 # The whole of the box's web serving: the / -> /en-us/ redirect (from
-# Settings.defaultLocale), static file serving via try_files, and a preview server block that
-# ships LIVE AND EMPTY — activating a preview is just a mkdir and an environment variable,
-# nothing more, and nginx is never reloaded for a single preview coming or going.
+# Settings.defaultLocale), static file serving via try_files, a preview server block whose
+# per-pull-request root is a named regex capture — so a preview coming or going is a mkdir and an
+# rm, and nginx is never reloaded for either — and the reverse proxy that routes GitHub's webhook
+# deliveries to the receiver roles/webhook runs.
 #
 # This role converges BEFORE any certificate exists — roles/certificates runs after it — so
 # the TLS server blocks in the template are conditional on a stat fact rather than unconditionally

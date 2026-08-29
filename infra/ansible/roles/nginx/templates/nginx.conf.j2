@@ -65,10 +65,11 @@ http {
     }
 {% endif %}
 
-    # ---- previews: live and empty ------------------------------------------------------------
-    # Activating a preview is a mkdir and an environment variable against this block, never a
-    # reload: the digit-only named capture is the whole path-traversal guard, because $prnum
-    # can never contain `/` or `..`.
+    # ---- previews: one static root per open pull request --------------------------------------
+    # Populated by jamground-preview-build (roles/isolation), which the queue consumer runs when a
+    # pull request opens or moves, and removed when it closes. Neither costs a reload: the root is
+    # resolved per request from the named capture, and the digit-only capture is the whole
+    # path-traversal guard, because $prnum can never contain `/` or `..`.
     server {
         listen 80;
         server_name ~^pr-(?<prnum>[0-9]+)\.preview\.{{ nginx_domain | regex_escape }}$;
@@ -95,6 +96,56 @@ http {
 
         location / {
             try_files $uri $uri/ =404;
+        }
+    }
+{% endif %}
+
+    # ---- webhook deliveries: {{ nginx_hooks_domain }} ------------------------------------------
+    # THE FIRST HOP. roles/webhook registers a GitHub webhook pointing at
+    # https://{{ nginx_hooks_domain }}/ and runs the receiver on 127.0.0.1:{{ nginx_hooks_port }},
+    # but until this block existed no server_name matched that name: every delivery fell through
+    # to the default server and GitHub recorded 405 for all of them. A receiver nothing routes to
+    # never receives, so the queue it writes stayed empty and looked healthy.
+    #
+    # The receiver owns every decision about a request, and this block must not pre-empt any of
+    # them: no `limit_except`, no method allowlist, no rewrite of the body — it answers 401 on a
+    # bad signature and 202 on success, and an nginx-authored 405 or 413 in front of that would
+    # be indistinguishable, from GitHub's delivery log, from the receiver having refused.
+    # client_max_body_size is set to the receiver's OWN cap (DEFAULT_MAX_BODY_BYTES in
+    # infra/hooks/lib/receiver.mjs) rather than left at nginx's 1 MB default, for that same
+    # reason: below it, nginx would reject a delivery the receiver would have accepted.
+    #
+    # proxy_pass with no URI part, so the request line reaches the receiver unmodified. The HMAC
+    # is computed over the raw bytes (infra/hooks/lib/hmac.mjs), so anything that re-encodes the
+    # body breaks every signature; nginx does not touch it, and nothing here asks it to.
+    server {
+        listen 80;
+        server_name {{ nginx_hooks_domain }};
+
+        client_max_body_size 5m;
+
+        location / {
+            proxy_pass http://127.0.0.1:{{ nginx_hooks_port }};
+            proxy_set_header Host $host;
+        }
+    }
+{% if jamground_cert_stat.stat.exists %}
+
+    # The live certificate covers *.{{ nginx_domain }}, which is the SAN {{ nginx_hooks_domain }}
+    # matches — this block requests nothing new, the same way the preview blocks above do not.
+    server {
+        listen 443 ssl;
+        server_name {{ nginx_hooks_domain }};
+
+        ssl_certificate {{ nginx_cert_dir }}/fullchain.pem;
+        ssl_certificate_key {{ nginx_cert_dir }}/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+
+        client_max_body_size 5m;
+
+        location / {
+            proxy_pass http://127.0.0.1:{{ nginx_hooks_port }};
+            proxy_set_header Host $host;
         }
     }
 {% endif %}

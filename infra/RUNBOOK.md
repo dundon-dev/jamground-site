@@ -115,7 +115,8 @@ ansible-playbook site.yml
 Twelve roles converge in order, each depending only on what already ran: `users` (the two
 service accounts and the no-argument sudo grant), `bot_token`, `toolchain` (pinned Node),
 `nginx`, `certificates`, `broker` (the OAuth token exchange), `editor_shell` (the editor's
-vhost), `webhook` (the receiver, shipped live and unused until wired up), `deploy` (the release
+vhost), `webhook` (the receiver, plus the timer that drains its queue into preview builds),
+`deploy` (the release
 mechanism, seeded with one placeholder release so `current` is never dangling), `content_repos`
 (clones both repositories and performs the first real build), `isolation` (build resource
 slices), and `selfcheck` last, since its checks are live against whatever the box now actually
@@ -133,14 +134,14 @@ checks connectivity:
 | `users.yml` | the two service accounts and the sudoers grant exist |
 | `bot-token.yml` | the bot token is in place and world-unreadable |
 | `toolchain.yml` | the pinned Node version is installed and on `PATH` for the build account |
-| `nginx.yml` | nginx is installed, enabled, and its config is valid |
+| `nginx.yml` | nginx is installed, enabled, its config is valid, and the `hooks.` vhost is in the config it is actually running |
 | `certificates.yml` | the certificate exists and covers the names the configuration expects |
 | `broker.yml` | the auth broker service is running and answering on localhost |
 | `editor-shell.yml` | the editor bundle is deployed and its vhost is live |
-| `webhook.yml` | the receiver is running and its HMAC secret is in place |
+| `webhook.yml` | the receiver is running, an unsigned delivery is refused both directly and routed by name through nginx, and the queue consumer's timer is enabled |
 | `deploy.yml` | `current` is a real symlink into `releases/`, the deploy mechanism is present and executable, and `/etc/jamground/deploy.env` carries the six identity values and nothing else |
 | `content-repos.yml` | both repositories are cloned, each over its own read-only deploy key |
-| `isolation.yml` | the build resource slices exist |
+| `isolation.yml` | the build resource slices exist, and the preview per-build unit runs the real build script rather than a placeholder |
 | `selfcheck.yml` | the periodic self-check timer is installed and enabled |
 
 Run any of them the same way `site.yml` runs, in a shell that has sourced `.env`:
@@ -172,6 +173,33 @@ It builds fresh (`npm ci && npm run build`), verifies the result — the build e
 default locale's index page exists, the release manifest parses — and only then flips `current`
 to the new release with one atomic `mv -T`. A build or a check that fails leaves `current`
 untouched; nothing partial is ever served.
+
+## Previews
+
+A pull request against the content repository builds its own staging site, with nothing to run by
+hand: GitHub POSTs to `https://hooks.<domain>/`, the receiver queues the delivery, and
+`jamground-hooks-consume.timer` picks it up within about a minute and runs the build. The result
+is at `https://pr-<N>.preview.<domain>/`, and closing the pull request removes it.
+
+To build one by hand — the same script, same arguments the consumer passes:
+
+```sh
+sudo -u jamground-build \
+  JAMGROUND_SITE_CHECKOUT=/srv/jamground/repos/site \
+  JAMGROUND_CONTENT_CHECKOUT=/srv/jamground/repos/content \
+  /usr/local/bin/jamground-preview-build 42 refs/pull/42/head
+```
+
+When a preview does not appear, the queue is the place to look, and nothing is ever thrown away:
+
+```sh
+journalctl -u jamground-hooks-consume --since -1h
+ls /var/lib/jamground-hooks/queue    # waiting
+ls /var/lib/jamground-hooks/failed   # tried, could not be handled — the delivery is intact
+```
+
+A job in `failed/` also makes the last consumer run exit non-zero, so `systemctl status
+jamground-hooks-consume` keeps saying so. Re-run one by moving it back into `queue/`.
 
 ## Rollback
 

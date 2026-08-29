@@ -5,15 +5,23 @@
 # (see infra/hooks/lib/hmac.mjs) — so the assertion below is on the 401,
 # never on a 200.
 #
-# `webhook_port` and `webhook_service_name` are repeated here rather than sourced from
-# roles/webhook/defaults — a verify playbook must not depend on a converge-time variable it
-# never loads.
+# Two more things a converge does not prove, both added with the queue consumer: that a delivery
+# arriving the way GitHub sends one actually REACHES the receiver (the 401 below is requested
+# through nginx, by name, not against the receiver's own port — that is the hop that was missing),
+# and that the timer which drains the queue is enabled rather than merely installed. An installed
+# timer that is not enabled is a queue that fills and is never read.
+#
+# Every name and port here is repeated rather than sourced from roles/webhook/defaults — a verify
+# playbook must not depend on a converge-time variable it never loads. `jamground_domain` is the
+# exception, and not one: group_vars is inventory data every play loads before its first task.
 - name: Verify the webhook receiver
   hosts: jamground
   gather_facts: false
   vars:
     webhook_port: 9000
     webhook_service_name: jamground-webhook
+    webhook_consumer_service_name: jamground-hooks-consume
+    webhook_consumer_timer_name: jamground-hooks-consume.timer
   tasks:
     - name: Query the webhook unit state
       ansible.builtin.command: systemctl is-active {{ webhook_service_name }}
@@ -45,3 +53,64 @@
         fail_msg: >-
           Unsigned POST returned {{ webhook_unsigned_post.status }} instead of 401 — an accepted
           unsigned request is the whole vulnerability this receiver exists to prevent.
+
+    - name: POST an unsigned delivery THROUGH nginx, by name — must reach the receiver and be rejected
+      ansible.builtin.uri:
+        url: http://127.0.0.1/
+        method: POST
+        headers:
+          Host: "hooks.{{ jamground_domain }}"
+        body_format: json
+        body:
+          zen: "unsigned delivery, routed — must reach the receiver and be refused by it"
+        status_code: [401]
+      register: webhook_routed_post
+
+    - name: Assert the rejection came from the receiver, not from nginx
+      ansible.builtin.assert:
+        that:
+          - webhook_routed_post.status == 401
+        fail_msg: >-
+          POST to hooks.{{ jamground_domain }} returned {{ webhook_routed_post.status }}, not 401.
+          405 means no server block matches that name and the request fell through to the default
+          server — the receiver never saw it. Only the receiver answers 401.
+
+    - name: Stat the queue consumer's service and timer units
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ item }}"
+      loop:
+        - "{{ webhook_consumer_service_name }}.service"
+        - "{{ webhook_consumer_timer_name }}"
+      register: webhook_consumer_units
+
+    - name: Assert both consumer units are installed
+      ansible.builtin.assert:
+        that:
+          - webhook_consumer_units.results | map(attribute='stat.exists') | list == [true, true]
+        fail_msg: >-
+          The queue consumer's units are not both on disk:
+          {{ webhook_consumer_units.results | map(attribute='stat.exists') | list }}
+
+    - name: Query whether the consumer timer is enabled
+      ansible.builtin.command: systemctl is-enabled {{ webhook_consumer_timer_name }}
+      register: webhook_consumer_enabled
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Query whether the consumer timer is active
+      ansible.builtin.command: systemctl is-active {{ webhook_consumer_timer_name }}
+      register: webhook_consumer_active
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the consumer timer is enabled and running
+      ansible.builtin.assert:
+        that:
+          - webhook_consumer_enabled.stdout == 'enabled'
+          - webhook_consumer_active.stdout == 'active'
+        fail_msg: >-
+          {{ webhook_consumer_timer_name }} is {{ webhook_consumer_enabled.stdout }} /
+          {{ webhook_consumer_active.stdout }} — a queue nothing drains fills silently, which
+          looks exactly like a queue with nothing in it.

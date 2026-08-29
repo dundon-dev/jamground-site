@@ -79,7 +79,9 @@ singletons (`settings/site.yaml`, `settings/redirects.yaml`) are read and valida
 since they carry no envelope for the collection loader to key on. One environment flag,
 `JAMGROUND_INCLUDE_DRAFTS`, decides whether draft entities are built at all — unset or empty
 means excluded, `1` means included, anything else is a hard error rather than a silent default.
-Preview and production are the same code path with one flag, never a fork.
+Preview and production are the same code path with one flag, never a fork: `jamground-deploy`
+leaves it unset and `jamground-preview-build` sets it to `1`, which is the entire difference
+between what a staging site shows and what the live site shows.
 
 A `ref:` field never holds a URL; it holds a translation-group id (see `docs/CONTENT.md`).
 `src/lib/links.ts` resolves every such reference to a real path at build time, not at render
@@ -93,8 +95,9 @@ broken in production either, because both builds enforce the same rule.
 `infra/ansible/site.yml` converges one host through twelve roles — accounts, the Node toolchain,
 nginx, TLS certificates, the auth broker, the editor's vhost, the webhook receiver, the deploy
 mechanism, the two content clones, build resource isolation, and a periodic self-check, in that
-order. The box pulls; nothing pushes to it. There is no CI/CD service — an operator (or, once
-wired to the webhook, the box itself) runs the playbook and the deploy script directly.
+order. The box pulls; nothing pushes to it. There is no CI/CD service — an operator runs the
+playbook and the deploy script directly. The one thing the box now does on its own is build
+staging sites: GitHub's webhook is the trigger, and the box does the fetching (see below).
 
 A deploy builds into a fresh, timestamped directory under `/srv/jamground/releases/`, verifies
 the result (the build exited zero, the default locale's index page exists, the release manifest
@@ -108,30 +111,77 @@ same target and flipping again — see `infra/RUNBOOK.md`. Old releases are prun
 last five, plus whatever `current` and `previous` point at), never by age, so a quiet week
 cannot prune away the one release a rollback needs.
 
+## Staging: a preview site per change, built by the box
+
+Opening a pull request against the content repository builds a staging site for it, reachable at
+`https://pr-<N>.preview.<domain>/`. Five pieces make that one chain, and each existed alone
+before it existed as a chain:
+
+1. **nginx routes two names.** `pr-<N>.preview.<domain>` is served from `<previews_root>/<N>`
+   (the capture is digits only, which is the whole path-traversal guard), and
+   `hooks.<domain>` proxies to the receiver on localhost. The second of those was missing for the
+   whole of this pipeline's earlier life — see below.
+2. **The receiver takes the delivery.** `infra/hooks/server.mjs` verifies GitHub's HMAC over the
+   raw bytes, refuses a replayed delivery id, and writes the job to a filesystem queue. It parses
+   nothing: what the payload *means* is not its decision to make.
+3. **The consumer makes the decision.** `infra/hooks/lib/consumer.mjs`, run by
+   `jamground-hooks-consume.timer` about once a minute, reads the queue oldest-first and turns
+   each `pull_request` delivery into one of three outcomes — build the preview
+   (`opened`/`reopened`/`synchronize`), tear it down (`closed`), or drop a delivery this pipeline
+   has no opinion about. A job it cannot handle is moved to `<state>/failed/` intact and the run
+   exits non-zero, because a queue that empties on error looks exactly like one that succeeded.
+4. **The build produces the site.** `jamground-preview-build` (`roles/isolation`) fetches the
+   pull request's head ref into a private ref namespace, extracts it with `git archive` — the
+   shared content checkout never leaves `main` — and builds the site checkout against that tree
+   with `JAMGROUND_INCLUDE_DRAFTS=1`, into an out directory of its own. It publishes into
+   `<previews_root>/<N>` only after the build exits zero and the default locale's index page
+   exists, which is the same discipline `jamground-deploy` applies before it flips `current`.
+5. **Closing the pull request removes it**, so the previews filesystem holds one static root per
+   *open* change and no more.
+
+Nothing in that chain runs as anything but `jamground-build`, the account with no sudo at all.
+That is also why the consumer invokes the build script directly rather than starting
+`jamground-preview-build@<N>.service`: `systemctl start` with an instance name is an
+argument-taking privileged command, and the two sudo entries this box grants take no arguments
+precisely so there is no path or option injection surface. The templated unit is real and
+instantiable by hand, and it keeps `PrivateNetwork=yes` — which is what makes it the wrong host
+for the automatic path, since fetching a ref pushed a second ago needs a network.
+
 ## What ships live and empty
 
-Three pieces of infrastructure are converged, verified and reachable, but nothing drives them.
-They are real systemd units and real nginx server blocks, not plans — which is exactly what
-makes them easy to mistake for working features. Each is listed here so the next person finds
-the gap by reading rather than by deploying.
+Some infrastructure is converged, verified and reachable while nothing drives it. Real systemd
+units and real nginx server blocks are exactly what makes such a gap easy to mistake for a
+working feature, so what is still empty is listed here, to be found by reading rather than by
+deploying.
 
-**Previews are routed but never built.** `roles/nginx` serves `pr-<N>.preview.<domain>` from
-`<previews_root>/<N>`, and the path-traversal guard on it is sound (the capture is digits only).
-`roles/isolation` installs `jamground-preview-build@.service` with the resource envelope a
-preview build should run inside. But its `ExecStart` is `/bin/true`, nothing instantiates the
-unit, and nothing ever writes into `<previews_root>`. Every preview URL therefore returns 404.
-The editor deliberately surfaces no preview link for this reason: a control that hands an editor
-a dead URL is worse than no control. Wiring it means giving the unit a real build command, having
-something instantiate it per change, and only then surfacing the URL.
+**The first hop used to be missing, and that is worth keeping written down.** `roles/webhook`
+authenticates GitHub's HMAC, refuses replays and enqueues correctly, with its own tests — and for
+the whole of its earlier life it never received anything, because no `server_name hooks.<domain>`
+existed in any template. Deliveries fell through to nginx's default server and GitHub recorded
+`405` for every one. Every part looked healthy from the box: the unit was active, the secret was
+in place, the certificate covered the name, `nginx -t` passed. Nothing but GitHub's own delivery
+log knew. `verify/nginx.yml` now asserts the vhost against `nginx -T`'s output and
+`verify/webhook.yml` POSTs to the name and requires the receiver's own `401`, so the same gap
+cannot reopen quietly.
 
-**There is no automatic deploy.** `roles/webhook` runs `infra/hooks/server.mjs`, which
-authenticates GitHub's HMAC, refuses replays and enqueues the delivery — correctly, and with its
-own tests. Nothing consumes that queue. `jamground-deploy` (`roles/deploy`) is the real build,
-verify, release-directory and symlink-flip mechanism, and it is invoked by hand. So publishing a
-change updates the content repository and does not update the site. Anyone expecting a push to
-reach the live site will find it did not, and no error will have been raised anywhere, because
-nothing failed — nothing was asked to run.
+**Previews are built, but the editor still does not link to them.** The URL is live and a change
+now populates it; nothing in `wp-admin` tells an editor it exists. That is deliberate for as long
+as the link would be a guess — it becomes a real control once the shell can tell whether a given
+pull request's build has landed yet, rather than handing out a URL that may still be 404 for
+another minute.
+
+**There is no automatic production deploy.** `jamground-deploy` (`roles/deploy`) is the real
+build, verify, release-directory and symlink-flip mechanism, and it is still invoked by hand: a
+merged pull request updates the content repository and does not update the live site. The seam is
+`deployProductionOnMerge` in `infra/hooks/lib/consumer.mjs` — a named, called, deliberately empty
+function on the `closed` + `merged` path, so there is exactly one place to wire and it is already
+reached by the tests. Wiring it needs three things it does not have yet: a way to run the flip,
+which needs the `jamground` account's two no-argument sudo wrappers rather than the
+`jamground-build` account the consumer runs as; one lock shared with `jamground-preview-build`,
+because `jamground-deploy` starts with an `npm ci` that deletes the dependency tree a preview
+build may be using in the same checkout; and a decision about what a failed automatic deploy
+should do that a failed manual one does not.
 
 **`jamground-production-build.service` is a resource envelope, not a build.** Its `ExecStart` is
-also `/bin/true`; `jamground-deploy` is invoked directly rather than through systemd, so the
-envelope constrains nothing today.
+still `/bin/true`; `jamground-deploy` is invoked directly rather than through systemd, so the
+envelope constrains nothing today. (Its preview counterpart is no longer a placeholder.)

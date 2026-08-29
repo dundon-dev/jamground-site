@@ -1,0 +1,25 @@
+# {{ ansible_managed }}
+#
+# About once a minute. That interval is the whole latency budget between an editor opening a pull
+# request and their staging site starting to build, so it is short — and it costs nothing when the
+# queue is empty, because the consumer exits immediately and says nothing on a pass that saw no
+# jobs.
+#
+# OnUnitActiveSec rather than OnCalendar, so the next tick is measured from the END of the last
+# run: a build that takes four minutes is followed by a one-minute gap, not by three ticks that
+# systemd refuses because the oneshot is still running.
+#
+# No Persistent=true — that replays a missed OnCalendar tick after downtime, and there is nothing
+# to replay here: the queue is on disk, so whatever arrived while the box was down is still in it
+# and the first tick after boot picks it up.
+[Unit]
+Description=jamground webhook queue consumer — every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Unit={{ webhook_consumer_service_name }}.service
+
+[Install]
+WantedBy=timers.target

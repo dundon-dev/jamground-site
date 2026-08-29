@@ -7,3 +7,18 @@ nginx_domain: "{{ jamground_domain }}"
 nginx_release_root: /srv/jamground/current
 nginx_previews_root: /srv/previews
 nginx_cert_dir: "/etc/letsencrypt/live/{{ nginx_domain }}"
+
+# The webhook receiver's public name and its localhost port, so this role can route GitHub's
+# deliveries to it. BOTH are repeated here as literals rather than read from
+# roles/webhook/defaults — the same cross-role convention isolation_previews_root already follows
+# for nginx_previews_root, and here it is forced rather than chosen: roles/nginx converges BEFORE
+# roles/webhook (site.yml), so `webhook_port` is not merely unstable, it is UNDEFINED at the
+# moment this role's template renders. Deriving the name from group_vars' `jamground_domain` is
+# safe for the opposite reason editor_shell/defaults already records: group_vars is inventory
+# data every play loads before its first task, not another role's converge-time variable.
+#
+# The duplication is gated rather than promised: test/gates/hooks-vhost.test.mjs compares this
+# port and this domain against roles/webhook/defaults' own and fails if the two ever drift, the
+# same shape tools/check-config.mjs holds group_vars and jamground.config.mjs to.
+nginx_hooks_domain: "hooks.{{ nginx_domain }}"
+nginx_hooks_port: 9000

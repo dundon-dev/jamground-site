@@ -12,6 +12,35 @@ webhook_secret_file: /etc/jamground/webhook.secret
 webhook_port: 9000
 webhook_service_name: jamground-webhook
 
+# The queue CONSUMER — a oneshot plus a timer, not a daemon. It belongs to this role because
+# infra/hooks/ is one application and this role is its courier: the same tree that ships
+# server.mjs ships consume.mjs, and the queue, lock and quarantine directories are declared once,
+# here, for the two processes that share them.
+#
+# webhook_failed_dir is where a job the consumer could not handle is moved, intact. It is NOT a
+# subdirectory of the queue: the consumer reads the queue every minute, and a quarantined job
+# still sitting inside it would be re-read and re-quarantined forever.
+webhook_failed_dir: "{{ webhook_state_dir }}/failed"
+# A writable HOME for the build the consumer runs. The unit sets ProtectHome=yes, so
+# /home/jamground-build is not there to be written to, and npm and git both want somewhere to put
+# a cache and a known_hosts file — pointed inside the state directory this unit already owns
+# rather than left to fail somewhere nobody looks.
+webhook_home_dir: "{{ webhook_state_dir }}/home"
+webhook_consumer_service_name: jamground-hooks-consume
+webhook_consumer_timer_name: jamground-hooks-consume.timer
+
+# Four paths that belong to roles/isolation and roles/content_repos, repeated here as literals
+# under the convention this file's header already states: a role must not depend on a sibling
+# role's variable names staying stable, and both of those roles converge AFTER this one, so their
+# defaults are not merely unstable here — they are unloaded. The consumer is written to survive
+# that ordering: it refuses to process a single job until the previews root exists and the build
+# script is executable, so the ticks between this role converging and roles/isolation converging
+# are retries rather than a queue full of jobs quarantined for the box's own half-built state.
+webhook_previews_root: /srv/previews
+webhook_preview_build_script: /usr/local/bin/jamground-preview-build
+webhook_site_checkout: /srv/jamground/repos/site
+webhook_content_checkout: /srv/jamground/repos/content
+
 # Editors push branches against the CONTENT repository only, so its pull requests are
 # what the preview trigger (open/close) fires on.
 webhook_github_org: "{{ jamground_github_org }}"

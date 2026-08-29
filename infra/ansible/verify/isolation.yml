@@ -25,6 +25,7 @@
     isolation_previews_root: /srv/previews
     isolation_previews_image: /var/lib/jamground/previews.img
     isolation_previews_size_bytes: 10737418240   # 10240M, fallocate's exact byte count
+    isolation_preview_build_script: /usr/local/bin/jamground-preview-build
   tasks:
     - name: Load and validate every shipped unit
       ansible.builtin.command:
@@ -196,3 +197,29 @@
         fail_msg: >-
           {{ isolation_previews_root }} is owned by
           {{ isolation_previews_root_stat.stat.pw_name }}, not jamground-build
+
+    # The preview per-build unit's ExecStart used to be /bin/true, and this playbook's header used
+    # to say so: what it checked was the envelope, "not that placeholder command". It is a real
+    # command now, so the placeholder is what must never come back — a unit that loads, caps
+    # memory, and runs /bin/true passes every assertion above while building nothing.
+    - name: Read the preview per-build unit's ExecStart
+      ansible.builtin.command: systemctl show "jamground-preview-build@0.service" --property=ExecStart --value
+      register: isolation_previewbuild_exec
+      check_mode: false
+      changed_when: false
+
+    - name: Stat the preview build script the unit names
+      ansible.builtin.stat:
+        path: "{{ isolation_preview_build_script }}"
+      register: isolation_preview_build_script_stat
+
+    - name: Assert the preview per-build unit runs the real build, with its instance as the argument
+      ansible.builtin.assert:
+        that:
+          - isolation_previewbuild_exec.stdout is search(isolation_preview_build_script | regex_escape)
+          - "'/bin/true' not in isolation_previewbuild_exec.stdout"
+          - isolation_preview_build_script_stat.stat.exists
+          - isolation_preview_build_script_stat.stat.executable
+        fail_msg: >-
+          jamground-preview-build@0.service ExecStart={{ isolation_previewbuild_exec.stdout }},
+          and {{ isolation_preview_build_script }} exists={{ isolation_preview_build_script_stat.stat.exists }}.

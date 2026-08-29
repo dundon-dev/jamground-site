@@ -9,8 +9,8 @@
  * "the lock file didn't exist and now it does" IS the lock, with no separate check-then-act step
  * for a second process to land in between.
  *
- * Why enqueue writes to a temp name and renames: a future consumer reads
- * this directory and must never see a job file that is half-written. `rename` within one
+ * Why enqueue writes to a temp name and renames: `consumer.mjs` reads
+ * this directory on a timer and must never see a job file that is half-written. `rename` within one
  * directory is atomic on the same filesystem, so a job either isn't there yet or is there whole.
  */
 import {

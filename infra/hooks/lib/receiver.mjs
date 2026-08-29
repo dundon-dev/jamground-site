@@ -13,9 +13,10 @@
  *   5. only THEN take the per-key lock and enqueue
  *
  * This receiver never parses the payload. It stores the raw bytes and the headers it was told to
- * keep, verbatim, in the queued job; turning that into a build decision is the consumer's job,
- * which does not exist yet. Ships live and unused: this process runs, answers
- * requests, and queues real jobs from day one, but nothing yet reads the queue it writes.
+ * keep, verbatim, in the queued job; turning that into a build decision is `consumer.mjs`'s job,
+ * and it is deliberately a separate process on a separate schedule. A receiver that decided
+ * anything would have to hold GitHub's connection open while it decided, and a build is minutes
+ * long — the 202 below is honest precisely because it promises storage and not completion.
  */
 import { verifySignature } from './hmac.mjs';
 import { claim } from './replay.mjs';

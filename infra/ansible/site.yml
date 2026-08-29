@@ -17,16 +17,19 @@
     # wildcard certificate roles/certificates issues and relies on nginx.conf's
     # `include conf.d/*.conf`, which roles/nginx already ships.
     - editor_shell
-    # No dependency on deploy/content_repos — the webhook receiver is an independent process
-    # that only needs the build account (users) and node (toolchain), both already converged.
+    # No CONVERGE-time dependency on deploy/content_repos/isolation — the receiver and the queue
+    # consumer only need the build account (users) and node (toolchain), both already converged.
+    # The consumer does need the previews root and the two checkouts to RUN, and those arrive with
+    # roles further down this list; it is written to refuse the whole pass until they exist rather
+    # than quarantine the jobs it finds in the meantime.
     - webhook
     - deploy
     # Depends on `deploy` having already shipped jamground-deploy and the seed release — this
     # role performs the first real pull, build and flip through that mechanism.
     - content_repos
     # No dependency on any role above — only needs the build account (users) already converged.
-    # Ships live and unused, the same shape webhook's receiver ships in: the per-build
-    # units carry no ExecStart that anything invokes yet.
+    # Ships the preview build script and the two slices; the preview per-build unit now runs that
+    # script, and the production one is still a bare envelope around no command.
     - isolation
     # Converges LAST: its checks are live, against whatever the box is actually
     # serving, so nginx, certificates, webhook and content_repos must already have run.

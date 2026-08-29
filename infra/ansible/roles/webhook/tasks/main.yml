@@ -6,12 +6,14 @@
 # `gh`, over the control node's own session (`delegate_to: localhost`, the same boundary
 # roles/content_repos already holds so a GitHub-writable credential never reaches the box).
 #
-# `hooks.{{ webhook_domain }}` already has a certificate — roles/certificates covers it under the
-# same wildcard as `edit` and the bare `preview` label — but the reverse proxy that would make it
-# actually reachable is a separate task's job (roles/nginx's `conf.d` is there for exactly this).
-# This role ships live and unused in the same shape `infra/hooks/server.mjs` already documents
-# for the queue it writes: the receiver runs, answers requests on its own port, and the webhook
-# is registered — nothing yet routes a real GitHub delivery to it.
+# `{{ webhook_domain }}` has both halves now. The certificate was always there — roles/certificates
+# covers it under the same wildcard as `edit` and the bare `preview` label — and roles/nginx now
+# carries the server block that actually routes the name to this receiver's port. It did not
+# before, and that single missing vhost was the whole of why this role looked converged while
+# every GitHub delivery fell through to the default server and was recorded as a 405.
+#
+# This role also ships the CONSUMER of the queue the receiver writes: a oneshot plus a timer, so
+# `infra/hooks/` arrives as one application rather than a receiver whose output nothing reads.
 
 - name: Ensure /etc/jamground exists
   ansible.builtin.file:
@@ -40,6 +42,25 @@
 - name: Ensure the webhook's queue/marker/lock state directory exists
   ansible.builtin.file:
     path: "{{ webhook_state_dir }}"
+    state: directory
+    owner: jamground-build
+    group: jamground-build
+    mode: '0750'
+
+# Created by the converge rather than left to the consumer's first failure: a directory that only
+# comes into existence the first time something goes wrong is a directory nobody has ever looked
+# at, and this is the one place a delivery that could not be handled survives.
+- name: Ensure the consumer's quarantine directory exists
+  ansible.builtin.file:
+    path: "{{ webhook_failed_dir }}"
+    state: directory
+    owner: jamground-build
+    group: jamground-build
+    mode: '0750'
+
+- name: Ensure the consumer has a writable HOME for npm and git
+  ansible.builtin.file:
+    path: "{{ webhook_home_dir }}"
     state: directory
     owner: jamground-build
     group: jamground-build
@@ -90,6 +111,36 @@
 - name: Ensure the webhook service is enabled and running
   ansible.builtin.systemd:
     name: "{{ webhook_service_name }}"
+    daemon_reload: true
+    state: started
+    enabled: true
+
+- name: Install the queue consumer's service unit
+  ansible.builtin.template:
+    src: jamground-hooks-consume.service.j2
+    dest: "/etc/systemd/system/{{ webhook_consumer_service_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd daemon
+
+- name: Install the queue consumer's timer — about once a minute
+  ansible.builtin.template:
+    src: jamground-hooks-consume.timer.j2
+    dest: "/etc/systemd/system/{{ webhook_consumer_timer_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd daemon
+
+- name: Flush handlers now, so the enable/start below sees the units just shipped
+  ansible.builtin.meta: flush_handlers
+
+# The TIMER is enabled, never the service: enabling a Type=oneshot would run it once at boot and
+# then never again, which is the shape roles/selfcheck already gets right for the same reason.
+- name: Ensure the queue consumer's timer is enabled and running
+  ansible.builtin.systemd:
+    name: "{{ webhook_consumer_timer_name }}"
     daemon_reload: true
     state: started
     enabled: true
