@@ -1,6 +1,13 @@
 # {{ ansible_managed }}
 #
-# About once a minute. That interval is the whole latency budget between an editor opening a pull
+# THE BACKSTOP, NOT THE MECHANISM. jamground-hooks-consume.path starts the consumer the moment a
+# job lands, so the normal latency is the build itself. This exists for the one case a path unit
+# cannot cover: a delivery that arrives while the consumer is ALREADY running does not re-trigger
+# the path, and would otherwise sit in the queue until the next unrelated delivery — on a quiet
+# repository, potentially days. Five minutes bounds that without adding a tick anyone waits on.
+#
+# It was one minute when it was the only mechanism, and the whole of an editor's wait for their
+# staging site was this interval. That interval is the whole latency budget between an editor opening a pull
 # request and their staging site starting to build, so it is short — and it costs nothing when the
 # queue is empty, because the consumer exits immediately and says nothing on a pass that saw no
 # jobs.
@@ -17,8 +24,8 @@ Description=jamground webhook queue consumer — every minute
 
 [Timer]
 OnBootSec=1min
-OnUnitActiveSec=1min
-AccuracySec=15s
+OnUnitActiveSec=5min
+AccuracySec=30s
 Unit={{ webhook_consumer_service_name }}.service
 
 [Install]

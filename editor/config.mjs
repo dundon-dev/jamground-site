@@ -23,6 +23,7 @@ import {
   editorRedirectUri,
   oauthClientId,
   previewUrlFor,
+  siteUrl,
 } from '../jamground.config.mjs';
 
 /** The public OAuth App Client ID the shell sends to GitHub's authorize screen. */
@@ -50,3 +51,6 @@ export const CONTENT_BLOB_BASE =
 
 /** The staging site for one open change. Derived, like everything else here. */
 export const PREVIEW_URL_FOR = previewUrlFor;
+
+/** The live site — where a change ends up once it is published. */
+export const SITE_URL = siteUrl;

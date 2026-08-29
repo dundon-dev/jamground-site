@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+#
+# Starts the queue consumer the moment a job lands, rather than up to a timer-interval later.
+#
+# WHY THIS EXISTS. The timer alone put the whole latency budget between an editor opening a change
+# and their staging site existing into a poll: measured on this box, a change opened at 17:07:30
+# waited until 17:08:25 for the next tick and then built in 3 seconds. Fifty-five of those
+# fifty-eight seconds bought nothing, and the editor — who is told the address at the moment the
+# change opens — spent them looking at a 404.
+#
+# PathExistsGlob rather than DirectoryNotEmpty, because the receiver writes each job as
+# `.<name>.tmp` and renames it into place (infra/hooks/lib/queue.mjs). DirectoryNotEmpty would fire
+# on the temp file, which is a job that does not exist yet; the glob matches only the final name.
+#
+# THE TIMER IS STILL THERE, AND IS NOT REDUNDANT. A path unit does not re-trigger while the service
+# it starts is still running, so a delivery that arrives DURING a build would otherwise wait for
+# the next arrival — which, on a quiet repository, could be days. The timer is what makes that a
+# bounded wait rather than an unbounded one. It is the backstop now, not the mechanism, and its own
+# interval was widened to say so.
+[Unit]
+Description=jamground webhook queue consumer — start as soon as a job arrives
+
+[Path]
+PathExistsGlob={{ webhook_queue_dir }}/*.json
+Unit={{ webhook_consumer_service_name }}.service
+
+[Install]
+WantedBy=paths.target

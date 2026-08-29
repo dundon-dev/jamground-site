@@ -28,6 +28,9 @@ webhook_failed_dir: "{{ webhook_state_dir }}/failed"
 webhook_home_dir: "{{ webhook_state_dir }}/home"
 webhook_consumer_service_name: jamground-hooks-consume
 webhook_consumer_timer_name: jamground-hooks-consume.timer
+# The path unit is what actually starts the consumer in the normal case; the timer above is the
+# backstop for a job that arrives while a build is already running.
+webhook_consumer_path_name: jamground-hooks-consume.path
 
 # Four paths that belong to roles/isolation and roles/content_repos, repeated here as literals
 # under the convention this file's header already states: a role must not depend on a sibling

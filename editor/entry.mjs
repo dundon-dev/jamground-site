@@ -12,7 +12,7 @@ import {
   getToken, clearToken, exchangeCodeForToken, beginAuthorization, stateMatches,
 } from './lib/auth.mjs';
 import { VOCAB } from './lib/vocabulary.mjs';
-import { CONTENT_REPO, CONTENT_BRANCH, PREVIEW_URL_FOR } from './config.mjs';
+import { CONTENT_REPO, CONTENT_BRANCH, PREVIEW_URL_FOR, SITE_URL } from './config.mjs';
 
 // The broker's own vhost proxies this path to it (infra/ansible/roles/editor_shell's
 // edit.conf.j2, `location = /token`) so this is same-origin wherever the shell is
@@ -497,7 +497,7 @@ window.jamgroundShell = (() => {
         } else if (result && result.waiting) {
           showStatus(result.message);
         } else {
-          showStatus(VOCAB.published);
+          showStatus(VOCAB.publishedLiveAt, SITE_URL);
           change = null;
           setStartAChangeEnabled(true);
         }

@@ -43,5 +43,10 @@ export const VOCAB = {
   sentForReview: 'the change has been sent for review',
   sendForReviewFailed: 'sending for review did not complete — please try again',
   published: 'published',
+  // Said with the live site's address attached. Publishing closes the change, and a closed change
+  // has no staging site — the link offered when it opened is torn down within the minute. Ending
+  // on the address that IS now correct closes the loop; leaving the old one on screen would hand
+  // the editor a link that worked a moment ago and does not now, which reads as a fault.
+  publishedLiveAt: 'published — your change is on the live site at:',
   publishFailed: 'publishing did not complete — please try again',
 };

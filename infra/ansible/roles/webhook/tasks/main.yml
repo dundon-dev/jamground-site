@@ -133,6 +133,15 @@
     mode: '0644'
   notify: reload systemd daemon
 
+- name: Install the queue consumer's path unit — starts it the moment a job lands
+  ansible.builtin.template:
+    src: jamground-hooks-consume.path.j2
+    dest: "/etc/systemd/system/{{ webhook_consumer_path_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd daemon
+
 - name: Flush handlers now, so the enable/start below sees the units just shipped
   ansible.builtin.meta: flush_handlers
 
@@ -141,6 +150,15 @@
 - name: Ensure the queue consumer's timer is enabled and running
   ansible.builtin.systemd:
     name: "{{ webhook_consumer_timer_name }}"
+    daemon_reload: true
+    state: started
+    enabled: true
+
+# Enabled the same way and for the same reason as the timer: the PATH is the unit that watches,
+# the service is what it starts.
+- name: Ensure the queue consumer's path unit is enabled and running
+  ansible.builtin.systemd:
+    name: "{{ webhook_consumer_path_name }}"
     daemon_reload: true
     state: started
     enabled: true
