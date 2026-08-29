@@ -12,8 +12,9 @@ const { createBlock, serialize, parse, getBlockType } = require('@wordpress/bloc
 registerCoreBlocks();
 
 const {
-  wpBlockToContractBlock, markupToContractBlocks, markupToBody, exportPost,
+  wpBlockToContractBlock, markupToContractBlocks, markupToBody, exportPost, exportEntity,
 } = await import('../lib/export.mjs');
+const { VOCAB } = await import('../lib/vocabulary.mjs');
 
 const api = { createBlock, serialize, parse, getBlockType };
 
@@ -167,3 +168,126 @@ test('exportPost throws on a block the attribute guard refuses, before writing a
   }), /align/);
 });
 
+// --- pages -------------------------------------------------------------------------------
+
+const PAGE_FRONTMATTER = {
+  id: '01M143VEG04JRXAX5JYES4JXZ0',
+  translationOf: '01M143VFF8TN0D6FNX3S6M5T49',
+  locale: 'en-US',
+  slug: 'home',
+  title: 'Home',
+  status: 'published',
+  publishedAt: '2026-08-28T12:00:00Z',
+  updatedAt: '2026-08-28T12:00:00Z',
+};
+
+test('exportEntity refuses an unknown kind rather than defaulting to post', () => {
+  const markup = serialize([createBlock('core/paragraph', { content: 'Body.' })]);
+  assert.throws(
+    () => exportEntity({
+      kind: undefined, api, markup, frontmatter: FRONTMATTER,
+      previousSlug: FRONTMATTER.slug, updatedAt: '2026-08-20T12:00:00Z',
+    }),
+    /unknown content kind undefined/,
+    'a lost kind must stop here — guessing "post" would write a page out as fenced markdown',
+  );
+});
+
+test('exportEntity writes a page as a whole YAML document, with blocks last and no fence', () => {
+  const markup = serialize([
+    createBlock('core/heading', { level: 2, content: 'Welcome' }),
+    createBlock('core/paragraph', { content: 'Hello.' }),
+  ]);
+  const file = exportEntity({
+    kind: 'page', api, markup,
+    frontmatter: PAGE_FRONTMATTER,
+    previousSlug: 'home',
+    updatedAt: '2026-08-28T12:00:00Z',
+  });
+
+  assert.equal(file.startsWith('---'), false, 'a page carries no frontmatter fence');
+  assert.equal(file, [
+    'id: 01M143VEG04JRXAX5JYES4JXZ0',
+    'translationOf: 01M143VFF8TN0D6FNX3S6M5T49',
+    'locale: en-US',
+    'slug: home',
+    'title: Home',
+    'status: published',
+    "publishedAt: '2026-08-28T12:00:00Z'",
+    "updatedAt: '2026-08-28T12:00:00Z'",
+    'blocks:',
+    '  - type: heading',
+    '    level: 2',
+    '    text: Welcome',
+    '  - type: paragraph',
+    '    text: Hello.',
+    '',
+  ].join('\n'));
+});
+
+// THE HOMEPAGE HAZARD. `src/pages/[locale]/index.astro` selects the front page by
+// `slug === 'home'` and `[slug].astro` excludes that slug from the ordinary routes, so renaming
+// the home page in wp-admin does not move the homepage — it REMOVES it. read-posts.mjs takes
+// the slug straight from `post_name`, so the rename reaches export intact; the build then
+// fails, jamground-deploy never flips a failed build, and the editor's only signal is a staging
+// site that never appears. Refusing here is where they can see it.
+test('exportEntity refuses to rename the home page, in editorial language', () => {
+  const markup = serialize([createBlock('core/paragraph', { content: 'Hello.' })]);
+  assert.throws(
+    () => exportEntity({
+      kind: 'page', api, markup,
+      frontmatter: { ...PAGE_FRONTMATTER, slug: 'welcome' },
+      previousSlug: 'home',
+      updatedAt: '2026-08-28T12:00:00Z',
+    }),
+    (err) => {
+      assert.equal(err.message, VOCAB.homePageAddressFixed);
+      assert.equal(err.editorial, true, 'marked so the shell says it instead of "please try again"');
+      assert.doesNotMatch(err.message, /branch|commit|merge|rebase|pull request/i);
+      return true;
+    },
+  );
+});
+
+test('exportEntity allows renaming any OTHER page', () => {
+  const markup = serialize([createBlock('core/paragraph', { content: 'Hello.' })]);
+  const file = exportEntity({
+    kind: 'page', api, markup,
+    frontmatter: { ...PAGE_FRONTMATTER, slug: 'about-us' },
+    previousSlug: 'about',
+    updatedAt: '2026-08-28T12:00:00Z',
+  });
+  assert.match(file, /slug: about-us\n/);
+  assert.match(file, /slugHistory:\n\s+- about\n/);
+});
+
+test('exportEntity allows a page that is ALREADY not the home page to keep its slug', () => {
+  const markup = serialize([createBlock('core/paragraph', { content: 'Hello.' })]);
+  const file = exportEntity({
+    kind: 'page', api, markup,
+    frontmatter: { ...PAGE_FRONTMATTER, slug: 'about' },
+    previousSlug: 'about',
+    updatedAt: '2026-08-28T12:00:00Z',
+  });
+  assert.match(file, /slug: about\n/);
+});
+
+// `Page.blocks` is `.min(1)`. Without this, deleting every block on a page reaches the
+// canonical writer as `Too small`, surfaces as "save did not complete — please try again", and
+// never works however many times they try.
+test('exportEntity refuses an emptied page with something true and actionable', () => {
+  assert.throws(
+    () => exportEntity({
+      kind: 'page', api, markup: '',
+      frontmatter: PAGE_FRONTMATTER,
+      previousSlug: 'home',
+      updatedAt: '2026-08-28T12:00:00Z',
+    }),
+    (err) => {
+      assert.equal(err.message, VOCAB.pageNeedsContent);
+      assert.equal(err.editorial, true);
+      assert.doesNotMatch(err.message, /Too small/, 'never the schema library\'s own wording');
+      return true;
+    },
+  );
+});

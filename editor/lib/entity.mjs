@@ -1,67 +1,39 @@
-// Parse and validate post frontmatter + body
-// Split frontmatter fence from markdown body, parse the frontmatter YAML,
-// validate against the Post schema. Refuse to boot on invalid content
-// rather than silently repairing it.
-import yaml from 'yaml';
-import { Post } from '../../src/contract/entities.ts';
+// Parse and validate one content entity, whatever kind it is.
+//
+// Every kind arrives here as bytes and leaves as the SAME SHAPE — `{ kind, frontmatter,
+// blocks, body, source }` — with the kind-specific part (where the envelope ends, whether a
+// body follows it, whether `blocks` is a field or has to be derived) declared once in
+// kinds.mjs and nowhere else.
+//
+// That uniformity is not tidiness. It is what lets read-posts.mjs lay `post_title` /
+// `post_name` over the baseline envelope with one line of code instead of two variants, and
+// what lets import.mjs run one admission check over both kinds. A shape that differed per kind
+// would put a branch in each of them.
+//
+// Refuse to boot on invalid content rather than silently repairing it.
+import { kindSpec } from './kinds.mjs';
 
 /**
- * Parse a post file into frontmatter, body, and raw source.
+ * Parse one entity's bytes into the uniform entity shape.
  *
- * The post file format is:
- * ---
- * frontmatter YAML here
- * ---
- * body markdown here
+ * `frontmatter` is the contract ENVELOPE, and only the envelope: a page's `blocks` field is
+ * lifted out of it into `blocks`, so `frontmatter` means the same thing for both kinds and
+ * export can re-attach whatever the editor produced. (Re-attaching at any object position is
+ * safe — canonical.ts derives key order from the schema's own shape.)
  *
+ * @param {string} kind - a key of KINDS ('post', 'page')
  * @param {string} path - File path (used in error messages)
  * @param {string} raw - Raw file content
- * @returns {{frontmatter: object, body: string, source: string}} - Parsed and validated post
- * @throws {Error} - If frontmatter fence is missing or schema validation fails
+ * @returns {{kind: string, frontmatter: object, blocks: Array|undefined, body: string, source: string}}
+ * @throws {Error} - If the kind is unknown, the file cannot be split or parsed, or the
+ *   document fails its schema
  */
-export function parsePost(path, raw) {
-  // Split frontmatter from body
-  // The first line must be ---, followed by content, then another ---
-  const lines = raw.split('\n');
+export function parseEntity(kind, path, raw) {
+  const spec = kindSpec(kind, `parseEntity ${path}`);
 
-  if (lines.length === 0 || !lines[0].startsWith('---')) {
-    throw new Error(`Missing frontmatter fence in ${path}`);
-  }
+  const { document, body } = spec.parse(path, raw);
 
-  // Find the closing fence
-  let closingFenceIndex = -1;
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i].startsWith('---')) {
-      closingFenceIndex = i;
-      break;
-    }
-  }
-
-  if (closingFenceIndex === -1) {
-    throw new Error(`Missing closing frontmatter fence in ${path}`);
-  }
-
-  // Extract frontmatter and body
-  const frontmatterText = lines.slice(1, closingFenceIndex).join('\n');
-  const bodyStart = closingFenceIndex + 1;
-  // Skip the newline immediately after the closing fence if present
-  const bodyLines = bodyStart < lines.length ? lines.slice(bodyStart) : [];
-  // Remove leading empty line if present
-  if (bodyLines.length > 0 && bodyLines[0] === '') {
-    bodyLines.shift();
-  }
-  const body = bodyLines.join('\n');
-
-  // Parse YAML
-  let frontmatter;
-  try {
-    frontmatter = yaml.parse(frontmatterText);
-  } catch (err) {
-    throw new Error(`Invalid YAML in frontmatter of ${path}: ${err.message}`);
-  }
-
-  // Validate against Post schema
-  const result = Post.safeParse(frontmatter);
+  const result = spec.schema.safeParse(document);
   if (!result.success) {
     const issues = result.error.issues.map(
       (issue) => `${issue.path.join('.')}: ${issue.message}`
@@ -69,10 +41,22 @@ export function parsePost(path, raw) {
     throw new Error(`Schema validation failed for ${path}: ${issues}`);
   }
 
-  // Return validated frontmatter, body, and source unchanged
-  return {
-    frontmatter: result.data,
-    body,
-    source: raw,
-  };
+  // A post's schema has no `blocks` field, so `blocks` is undefined here and its blocks come
+  // from the body via the kind's own `toBlocks`. A page's are already the contract's.
+  const { blocks, ...frontmatter } = result.data;
+
+  return { kind, frontmatter, blocks, body, source: raw };
+}
+
+/**
+ * The post-shaped entry point, kept as a thin wrapper: the nine test files and the Playwright
+ * suite that already call it are asserting facts about POSTS, which have not changed.
+ *
+ * @param {string} path - File path (used in error messages)
+ * @param {string} raw - Raw file content
+ * @returns {{frontmatter: object, body: string, source: string}} - Parsed and validated post
+ * @throws {Error} - If the frontmatter fence is missing or schema validation fails
+ */
+export function parsePost(path, raw) {
+  return parseEntity('post', path, raw);
 }

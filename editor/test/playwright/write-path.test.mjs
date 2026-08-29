@@ -34,6 +34,7 @@ import http from 'http';
 import { fileURLToPath } from 'url';
 import { VOCAB } from '../../lib/vocabulary.mjs';
 import { CONTENT_REPO } from '../../config.mjs';
+import { listSeedEntities } from './seed-entities.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const editorDir = path.join(__dirname, '../../');
@@ -109,6 +110,9 @@ async function waitForLastActionType(page, type, { timeout = 20000 } = {}) {
 
 test('the write path: start a change, save, send for review, publish — through the real controls only', async () => {
   await buildBundle();
+
+  // Asked of the repository, not written down — see ./seed-entities.mjs.
+  const seedEntities = await listSeedEntities();
 
   const { server, port } = await startServer();
   const baseUrl = `http://localhost:${port}`;
@@ -340,7 +344,12 @@ test('the write path: start a change, save, send for review, publish — through
     const importError = await page.evaluate(() => window.jamgroundImportError);
     assert(!importError, `import should not throw: ${importError}`);
     const importMap = await page.evaluate(() => window.jamgroundImportResult);
-    assert(importMap && Object.keys(importMap).length === 2, 'import should have produced two posts');
+    // One row per entity the repository holds, derived rather than the literal 2 — which was a
+    // fact about a seed that no longer exists, and would be wrong again the next time it moves.
+    assert(
+      importMap && Object.keys(importMap).length === seedEntities.length,
+      `import should have produced one row per entity (${seedEntities.length}), got ${importMap && Object.keys(importMap).length}`,
+    );
 
     // 1. preview has no control; the five that remain are labelled editorially.
     const controls = await page.evaluate(() =>

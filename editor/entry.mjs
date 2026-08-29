@@ -469,7 +469,11 @@ window.jamgroundShell = (() => {
         return { success: true, changed: changedPosts.length };
       } catch (error) {
         console.error('[jamgroundShell] save failed:', error);
-        showStatus(VOCAB.saveFailed);
+        // Some refusals already carry the editor-facing sentence and name their own remedy —
+        // a renamed home page, a page emptied of every block. `saveFailed` says "please try
+        // again" about the one class of failure where trying again can never work, so an
+        // error that marked itself editorial is shown as it is.
+        showStatus(error && error.editorial ? error.message : VOCAB.saveFailed);
         throw error;
       }
     },

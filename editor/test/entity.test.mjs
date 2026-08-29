@@ -1,7 +1,7 @@
 // Test entity parsing and validation
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePost } from '../lib/entity.mjs';
+import { parseEntity, parsePost } from '../lib/entity.mjs';
 
 // Valid seed post 1
 const VALID_POST_1 = `---
@@ -76,6 +76,9 @@ test('parsePost handles seed post 2 with optional fields', () => {
   assert.deepEqual(result.frontmatter.related, ['01M0BSHNK661FD6Y2JPMH75A1E']);
 });
 
+// The next two are facts about the POST FORMAT — a `.md` file whose envelope is fenced — and
+// must never become facts about content in general. A page has no fence to miss; see the page
+// companions at the end of this file.
 test('parsePost throws on missing opening fence', () => {
   const nofence = `id: 01M0BSHTFEWS6VYC4XBR52R3JE
 translationOf: 01M0BSHSG62QD33PKX3GRRXX5W
@@ -189,5 +192,71 @@ No author field`;
   assert.throws(
     () => parsePost(path, noAuthor),
     new RegExp(path)
+  );
+});
+
+// --- pages -------------------------------------------------------------------------------
+//
+// A page is a whole YAML document: no fence, no body, and its `blocks` field IS the contract
+// block list. The fence splitter above is now the post kind's own parser and is unreachable
+// from here, which is the point — "Missing frontmatter fence" was never true of a page, and
+// while one parser served every kind there was no way to say so.
+
+const VALID_PAGE = `id: 01M0BSHTFEWS6VYC4XBR52R3JG
+translationOf: 01M0BSHSG62QD33PKX3GRRXX5Y
+locale: en-US
+slug: about
+title: About
+status: published
+publishedAt: '2026-08-01T09:00:00Z'
+updatedAt: '2026-08-01T09:00:00Z'
+blocks:
+  - type: heading
+    level: 2
+    text: About us
+  - type: paragraph
+    text: Some words.
+`;
+
+test('parseEntity parses a fenceless .yaml page', () => {
+  const result = parseEntity('page', '/content/pages/en-US/about.yaml', VALID_PAGE);
+  assert.equal(result.kind, 'page');
+  assert.equal(result.body, '', 'a page has no body following its envelope');
+  assert.equal(result.source, VALID_PAGE);
+});
+
+test('parseEntity lifts a page\'s blocks out of the envelope', () => {
+  const result = parseEntity('page', '/content/pages/en-US/about.yaml', VALID_PAGE);
+
+  // `frontmatter` means the same thing for both kinds — the envelope, and only the envelope —
+  // which is what lets read-posts.mjs lay post_title/post_name over it with one code path.
+  assert.deepEqual(result.frontmatter, {
+    id: '01M0BSHTFEWS6VYC4XBR52R3JG',
+    translationOf: '01M0BSHSG62QD33PKX3GRRXX5Y',
+    locale: 'en-US',
+    slug: 'about',
+    title: 'About',
+    status: 'published',
+    publishedAt: '2026-08-01T09:00:00Z',
+    updatedAt: '2026-08-01T09:00:00Z',
+  });
+  assert.deepEqual(result.blocks, [
+    { type: 'heading', level: 2, text: 'About us' },
+    { type: 'paragraph', text: 'Some words.' },
+  ]);
+});
+
+test('parseEntity refuses a page with no blocks, naming the file', () => {
+  const empty = VALID_PAGE.replace(/blocks:[\s\S]*$/, 'blocks: []\n');
+  assert.throws(
+    () => parseEntity('page', '/content/pages/en-US/empty.yaml', empty),
+    /Schema validation failed for \/content\/pages\/en-US\/empty\.yaml.*blocks/s,
+  );
+});
+
+test('parseEntity refuses an unknown kind rather than guessing one', () => {
+  assert.throws(
+    () => parseEntity('author', '/content/authors/en-US/john.yaml', VALID_PAGE),
+    /unknown content kind "author"/,
   );
 });

@@ -17,10 +17,10 @@ const { createBlock, serialize, parse, getBlockType } = require('@wordpress/bloc
 registerCoreBlocks();
 
 const {
-  markupToContractBlocks, exportPost,
+  markupToContractBlocks, exportPost, exportEntity,
 } = await import('../lib/export.mjs');
 const { blocksToMarkup } = await import('../lib/blocks-to-wp.mjs');
-const { parsePost } = await import('../lib/entity.mjs');
+const { parseEntity, parsePost } = await import('../lib/entity.mjs');
 const { blocksToMdast } = await import('../lib/blocks-to-mdast.mjs');
 
 const api = { createBlock, serialize, parse, getBlockType };
@@ -195,4 +195,79 @@ test('round trip: seed post 2 (draft, minimal fields) is byte-identical', () => 
       : 'bytes should be identical'
   );
   assert.equal(exported, SEED_POST_2);
+});
+
+// --- pages -------------------------------------------------------------------------------
+//
+// The same property, through a different serialiser. A page has no markdown step at all: its
+// blocks go to Gutenberg and come back, and the whole file is `write({…envelope, blocks},
+// Page)` with no frontmatter fence. If those bytes are not identical, `_jamground_source`
+// differs from the export with NO EDIT AT ALL, and the first save writes that difference into
+// the person's own repository inside a change they believe is theirs.
+//
+// This fixture pins the two things a page's own writer has to get right and a post's never
+// exercised: the `blocks` key sits last (canonical.ts derives key order from the schema's
+// shape, and `Page = Envelope.extend({ blocks })` puts it there by construction), and a text
+// containing a colon is quoted by the canonical writer and comes back unquoted through the
+// block round trip.
+
+const SEED_PAGE = `id: 01M143VEG04JRXAX5JYES4JXZ0
+translationOf: 01M143VFF8TN0D6FNX3S6M5T49
+locale: en-US
+slug: home
+title: Home
+status: published
+publishedAt: '2026-08-28T12:00:00Z'
+updatedAt: '2026-08-28T12:00:00Z'
+blocks:
+  - type: heading
+    level: 2
+    text: Welcome
+  - type: paragraph
+    text: 'This site demonstrates the shape of the content in this repository: one page, one post, one author and one navigation menu.'
+`;
+
+test('round trip: a seed page is byte-identical through write(x, Page)', () => {
+  const parsed = parseEntity('page', '/content/pages/en-US/home.yaml', SEED_PAGE);
+
+  // No mdastToBlocks step: `Page.blocks` IS the contract block list blocksToMarkup consumes.
+  const markup = blocksToMarkup(api, parsed.blocks);
+
+  const exported = exportEntity({
+    kind: 'page',
+    api,
+    markup,
+    frontmatter: parsed.frontmatter,
+    previousSlug: parsed.frontmatter.slug,
+    updatedAt: parsed.frontmatter.updatedAt,
+  });
+
+  const diffOffset = findFirstDiff(SEED_PAGE, exported);
+  assert.equal(
+    diffOffset, -1,
+    diffOffset >= 0
+      ? `First differing byte at offset ${diffOffset}: original=${JSON.stringify(SEED_PAGE[diffOffset])} vs exported=${JSON.stringify(exported[diffOffset])}`
+      : 'bytes should be identical'
+  );
+  assert.equal(exported, SEED_PAGE);
+  assert.equal(exported.startsWith('---'), false, 'a page carries no frontmatter fence');
+});
+
+test('round trip: the post serialiser cannot reproduce a page', () => {
+  const parsed = parseEntity('page', '/content/pages/en-US/home.yaml', SEED_PAGE);
+  const markup = blocksToMarkup(api, parsed.blocks);
+
+  // The same envelope and the same markup, exported as a post. This particular page fails
+  // loudly, because `Post` requires an `author` a page's envelope has not got — but that is
+  // luck, not the guarantee: an envelope that satisfied both schemas would emit fenced
+  // markdown and overwrite the YAML document with it, with nothing complaining. The guarantee
+  // is read-posts.mjs's three-way cross-check, which stops before export is ever reached, and
+  // exportEntity's refusal to default a missing kind (export.test.mjs).
+  assert.throws(() => exportPost({
+    api,
+    markup,
+    frontmatter: parsed.frontmatter,
+    previousSlug: parsed.frontmatter.slug,
+    updatedAt: parsed.frontmatter.updatedAt,
+  }), /author/);
 });

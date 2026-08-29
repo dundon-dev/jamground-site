@@ -49,6 +49,7 @@ test('unmodified post yields an empty set', () => {
   // Create a post with that stored source
   const post = {
     id: 1,
+    kind: 'post',
     content: originalMarkup, // same markup as when originally imported
     slug: FRONTMATTER.slug,
     frontmatter: FRONTMATTER,
@@ -86,6 +87,7 @@ test('changed headline yields exactly one entry', () => {
 
   const post = {
     id: 1,
+    kind: 'post',
     content: modifiedMarkup, // changed markup
     slug: FRONTMATTER.slug,
     frontmatter: FRONTMATTER,
@@ -107,6 +109,7 @@ test('missing stored source throws', () => {
 
   const post = {
     id: 1,
+    kind: 'post',
     content: markup,
     slug: FRONTMATTER.slug,
     frontmatter: FRONTMATTER,

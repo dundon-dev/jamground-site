@@ -269,13 +269,14 @@ test('save with one changed file issues one commit', async () => {
       id: 1,
       content: 'block markup',
       slug: 'post-1',
+      kind: 'post',
       meta: { _jamground_id: 'id-001', _jamground_source: 'old', _jamground_path: 'content/posts/en-US/post-001.md' },
       frontmatter: { id: 'id-001', slug: 'post-1', title: 'Post 1' },
     },
   ];
 
   const mockGetChangedFiles = () => mockChangedFiles;
-  const mockExportPost = () => '---\nid: id-001\nslug: post-1\ntitle: Post 1\n---\n\nContent here';
+  const mockExportEntity = () => '---\nid: id-001\nslug: post-1\ntitle: Post 1\n---\n\nContent here';
 
   const gitWriter = {
     commitFiles: async ({ baseBranch, branch, files, message }) => {
@@ -295,7 +296,7 @@ test('save with one changed file issues one commit', async () => {
     api: null,
     getUpdatedAt: () => '2026-08-01T09:00:00Z',
     getChangedFiles: mockGetChangedFiles,
-    exportPost: mockExportPost,
+    exportEntity: mockExportEntity,
   });
 
   assert.ok(commitFilesCalled, 'commitFiles should be called');
@@ -339,12 +340,13 @@ test('save commit message carries no git vocabulary', async () => {
       id: 1,
       content: 'markup',
       slug: 'post-1',
+      kind: 'post',
       meta: { _jamground_id: 'id-001', _jamground_source: 'old', _jamground_path: 'content/posts/en-US/post-001.md' },
       frontmatter: { id: 'id-001', slug: 'post-1' },
     },
   ];
 
-  const mockExportPost = () => '---\nid: id-001\n---\nContent';
+  const mockExportEntity = () => '---\nid: id-001\n---\nContent';
 
   const gitWriter = {
     commitFiles: async ({ message }) => {
@@ -361,7 +363,7 @@ test('save commit message carries no git vocabulary', async () => {
     api: null,
     getUpdatedAt: () => '2026-08-01T09:00:00Z',
     getChangedFiles: mockGetChangedFiles,
-    exportPost: mockExportPost,
+    exportEntity: mockExportEntity,
   });
 
   assert.equal(capturedMessage, 'Update post');
@@ -379,7 +381,7 @@ test('save throws when _jamground_path is missing', async () => {
     },
   ];
 
-  const mockExportPost = () => '---\nid: id-001\n---\nContent';
+  const mockExportEntity = () => '---\nid: id-001\n---\nContent';
 
   const gitWriter = {
     commitFiles: async () => {
@@ -397,7 +399,7 @@ test('save throws when _jamground_path is missing', async () => {
       api: null,
       getUpdatedAt: () => '2026-08-01T09:00:00Z',
       getChangedFiles: mockGetChangedFiles,
-      exportPost: mockExportPost,
+      exportEntity: mockExportEntity,
     }),
     (err) => err.message.includes('_jamground_path'),
   );

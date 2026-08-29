@@ -58,4 +58,35 @@ export const VOCAB = {
   // the editor a link that worked a moment ago and does not now, which reads as a fault.
   publishedLiveAt: 'published — your change is on the live site at:',
   publishFailed: 'publishing did not complete — please try again',
+
+  // Two refusals that belong to pages, and that reach the editor through the save path.
+  //
+  // Both are said INSTEAD of `saveFailed`, which would be true but useless: "save did not
+  // complete — please try again" invites an editor to try the same thing again forever, and
+  // neither of these ever succeeds on a retry. Each names the one thing that would fix it.
+  //
+  // The home page's address is how the site finds its front page (src/pages/[locale]/
+  // index.astro selects it, [slug].astro excludes it), so renaming it does not move the
+  // homepage, it removes it.
+  homePageAddressFixed:
+    'the home page has to keep the address "home" — that address is how the site finds its front page, and a different one would leave the site without one. Put it back and save again.',
+  // A page must carry at least one piece of content (the contract's own rule), so an emptied
+  // page cannot be written at all.
+  pageNeedsContent:
+    'a page cannot be saved with nothing on it — put some content back on the page first.',
 };
+
+/**
+ * An error whose message is ALREADY the editor-facing sentence, marked so the shell says it
+ * rather than replacing it with a generic one.
+ *
+ * The shell's save handler otherwise reports every failure as `saveFailed`, which is right for
+ * a network error and wrong for a refusal that names its own remedy: the editor is told to try
+ * again at the one moment trying again cannot work. `editorial` is the flag entry.mjs checks;
+ * an ordinary Error carries no such property, so the generic message stays the default.
+ */
+export function editorialError(message) {
+  const error = new Error(message);
+  error.editorial = true;
+  return error;
+}

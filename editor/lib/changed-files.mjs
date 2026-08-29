@@ -1,12 +1,15 @@
-// Changed files: compare exported posts against stored source.
+// Changed files: compare exported entities against stored source.
 // Saving without editing must produce no diff at all — that is a comparison against
 // the imported source held in post meta (_jamground_source), never a
 // re-derivation.
 //
-// Export each post, compare the emitted bytes against the stored source, and
+// Export each entity, compare the emitted bytes against the stored source, and
 // return only the entities whose bytes differ; an empty set means the save
 // commits nothing and opens no change.
-import { exportPost } from './export.mjs';
+//
+// Kind-agnostic: `post.kind` came off the row readPosts built, which cross-checked it three
+// ways, and is passed straight through. Nothing here re-derives it.
+import { exportEntity } from './export.mjs';
 
 /**
  * Compare exported posts against their stored source bytes.
@@ -36,8 +39,9 @@ export function getChangedFiles(posts, { api, getUpdatedAt }) {
       );
     }
 
-    // Export the current post to canonical format
-    const exported = exportPost({
+    // Export the current entity to canonical format
+    const exported = exportEntity({
+      kind: post.kind,
       api,
       markup: post.content, // post_content is the block markup
       frontmatter,

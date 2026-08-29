@@ -1,7 +1,7 @@
 // Start a change: create a branch and open a draft PR before any editing.
 // Save: commit the changed-file set to the branch.
 import { getChangedFiles as defaultGetChangedFiles } from './changed-files.mjs';
-import { exportPost as defaultExportPost } from './export.mjs';
+import { exportEntity as defaultExportEntity } from './export.mjs';
 
 /**
  * Start a change: create a branch from the default branch and open a draft PR.
@@ -115,7 +115,7 @@ export async function startChange({
  * @param {object} config.api - Block API (createBlock, serialize, parse, getBlockType)
  * @param {Function} config.getUpdatedAt - Function returning current timestamp
  * @param {Function} config.getChangedFiles - Override for change detection (testing)
- * @param {Function} config.exportPost - Override for export (testing)
+ * @param {Function} config.exportEntity - Override for export (testing)
  * @returns {Promise<void>}
  */
 export async function save({
@@ -127,7 +127,7 @@ export async function save({
   api,
   getUpdatedAt,
   getChangedFiles = defaultGetChangedFiles,
-  exportPost = defaultExportPost,
+  exportEntity = defaultExportEntity,
 }) {
   // Get the set of posts that have changed
   const changedPosts = getChangedFiles(posts, { api, getUpdatedAt });
@@ -146,7 +146,10 @@ export async function save({
       );
     }
     const frontmatter = post.frontmatter || {};
-    const exported = exportPost({
+    // `post.kind` rides on the row readPosts returned; the serialiser is chosen by it and
+    // never by this module inspecting the path it is about to write to.
+    const exported = exportEntity({
+      kind: post.kind,
       api,
       markup: post.content,
       frontmatter,

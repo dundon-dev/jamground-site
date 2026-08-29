@@ -99,3 +99,85 @@ test('a schema-invalid entity still refuses WHOLESALE — a broken repository is
     'schema-invalid means the content itself is wrong; that must not degrade to a per-entity skip',
   );
 });
+
+// --- pages -------------------------------------------------------------------------------
+//
+// The admission check is per KIND as well as per entity: a page's blocks are the contract's
+// already, so it is exported through `write(x, Page)` and compared against a whole YAML
+// document with no fence. Running the check through the post kind would compare a page against
+// fenced markdown and refuse every page there is — which would look exactly like the mappers
+// being unfinished, and be a defect in this file instead.
+
+const pageEnvelope = (id, slug, title) => [
+  `id: ${id}`,
+  'translationOf: 01M16P85G0EWFHCEP57ZD9ZTNF',
+  'locale: en-US',
+  `slug: ${slug}`,
+  `title: ${title}`,
+  'status: published',
+  "publishedAt: '2026-08-28T12:00:00Z'",
+  "updatedAt: '2026-08-28T12:00:00Z'",
+  'blocks:',
+  '',
+].join('\n');
+
+const PLAIN_PAGE = pageEnvelope('01M16P89CTGH1B6R7ZP0K1QYVX', 'about', 'An ordinary page')
+  + '  - type: heading\n    level: 2\n    text: About us\n  - type: paragraph\n    text: Some words.\n';
+
+// A separator: a contract block type blocks-to-wp.mjs does not yet build. Held back for the
+// same reason a post with a code fence is, and by the same machinery.
+const RULED_PAGE = pageEnvelope('01M16P8ABGP5X0MFHZ2QW8N4TR', 'ruled', 'A page with a rule')
+  + '  - type: paragraph\n    text: Above.\n  - type: separator\n  - type: paragraph\n    text: Below.\n';
+
+test('a page that round-trips is imported, as a page', async () => {
+  const { client, fetchImpl, written } = harness([
+    ['content/posts/en-US/plain.md', PLAIN],
+    ['content/pages/en-US/about.yaml', PLAIN_PAGE],
+  ]);
+
+  const result = await importPosts({ client, api, fetchImpl, locale: 'en-US' });
+
+  assert.deepEqual(result.refused, [], 'a page of heading and paragraph survives its own round trip');
+  assert.equal(Object.keys(result.map).length, 2, 'both the post and the page get a WordPress row');
+
+  const entries = JSON.parse(written['/wordpress/jp-import-data.json']);
+  const bySlug = Object.fromEntries(entries.map((e) => [e.slug, e]));
+
+  // The post type and the declared kind travel as DATA in the JSON file, never interpolated
+  // into the PHP — and they are the page's own, not the post's.
+  assert.equal(bySlug.about.kind, 'page');
+  assert.equal(bySlug.about.postType, 'page');
+  assert.equal(bySlug.about.path, 'content/pages/en-US/about.yaml');
+  assert.equal(bySlug.plain.kind, 'post');
+  assert.equal(bySlug.plain.postType, 'post');
+
+  // `_jamground_source` is the fetched bytes verbatim — for a page, a fenceless YAML document.
+  assert.equal(bySlug.about.source, PLAIN_PAGE);
+  assert.equal(bySlug.about.source.startsWith('---'), false);
+
+  // The importer reads both values out of the entry rather than composing PHP around them.
+  const php = written['/wordpress/jp-import.php'];
+  assert.match(php, /'post_type'\s*=>\s*\$entry\['postType'\]/);
+  assert.match(php, /'_jamground_kind'\s*=>\s*\$entry\['kind'\]/);
+});
+
+test('a page whose blocks do not survive the round trip is held back, and the rest still import', async () => {
+  const { client, fetchImpl, written } = harness([
+    ['content/posts/en-US/plain.md', PLAIN],
+    ['content/pages/en-US/about.yaml', PLAIN_PAGE],
+    ['content/pages/en-US/ruled.yaml', RULED_PAGE],
+  ]);
+
+  const result = await importPosts({ client, api, fetchImpl, locale: 'en-US' });
+
+  assert.equal(result.refused.length, 1, 'exactly the page with an unsupported block is held back');
+  assert.equal(result.refused[0].path, 'content/pages/en-US/ruled.yaml');
+  assert.equal(result.refused[0].title, 'A page with a rule', 'the editor is told WHICH content, by its title');
+  assert.match(result.refused[0].reason, /separator/, 'and why, naming the block type');
+
+  // Enforced by absence, exactly as for a post: no row, so no _jamground_id, so read-posts
+  // cannot see it, so save cannot write it.
+  const entries = JSON.parse(written['/wordpress/jp-import-data.json']);
+  assert.deepEqual(entries.map((e) => e.slug).sort(), ['about', 'plain']);
+  assert.equal(Object.keys(result.map).length, 2);
+});

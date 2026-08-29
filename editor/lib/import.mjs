@@ -8,13 +8,21 @@
 //   _jamground_id     the contract id
 //   _jamground_source the fetched bytes verbatim, so export compares against what was
 //                      imported rather than re-deriving it ("no edit, no diff")
+//   _jamground_path   the repository path the bytes came from
+//   _jamground_kind   which kind the row is, DECLARED rather than inferred. read-posts.mjs
+//                      cross-checks it against the kind its path implies and against
+//                      WordPress's own post_type; the three disagreeing means a row would be
+//                      written back through the wrong serialiser, which is the silent
+//                      corruption case. Inferring from the path alone works until a path
+//                      changes, and then fails by writing YAML through the markdown
+//                      serialiser rather than by stopping.
 //
 // Media import is out of scope: the seed repository has none.
-import { listPosts } from './content-source.mjs';
-import { parsePost } from './entity.mjs';
+import { listEntities } from './content-source.mjs';
+import { parseEntity } from './entity.mjs';
 import { blocksToMarkup } from './blocks-to-wp.mjs';
-import { mdastToBlocks } from '../../src/lib/mdast-to-blocks.ts';
-import { exportPost } from './export.mjs';
+import { KINDS, kindSpec } from './kinds.mjs';
+import { exportEntity } from './export.mjs';
 
 // A static importer: every value that came from content/ travels through the JSON data
 // file written alongside it, never interpolated into this PHP source. A title or body
@@ -26,7 +34,7 @@ $entries = json_decode(file_get_contents(__DIR__ . '/jp-import-data.json'), true
 $map = [];
 foreach ($entries as $entry) {
   $postarr = [
-    'post_type'    => 'post',
+    'post_type'    => $entry['postType'],
     'post_status'  => $entry['status'] === 'published' ? 'publish' : 'draft',
     'post_title'   => $entry['title'],
     'post_name'    => $entry['slug'],
@@ -35,6 +43,7 @@ foreach ($entries as $entry) {
       '_jamground_id'     => $entry['contractId'],
       '_jamground_source' => $entry['source'],
       '_jamground_path'   => $entry['path'],
+      '_jamground_kind'   => $entry['kind'],
     ],
   ];
   if (!empty($entry['publishedAt'])) {
@@ -50,8 +59,9 @@ echo json_encode($map);
 `;
 
 /**
- * Fetch the two posts, validate them against the contract, convert their bodies to block
- * markup, and insert them into wp-admin as drafts/published per their contract `status`.
+ * Fetch every entity of every declared kind for this locale, validate them against the
+ * contract, convert them to block markup, and insert them into wp-admin as drafts/published
+ * per their contract `status` and as the post type their kind declares.
  *
  * @param {object} deps
  * @param {object} deps.client   - the Playground client (documentRoot, writeFile, run)
@@ -61,12 +71,13 @@ echo json_encode($map);
  * @returns {Promise<Record<string, number>>} contract id -> WP post ID, the session map
  */
 export async function importPosts({ client, api, fetchImpl, locale }) {
-  const fetched = await listPosts(fetchImpl, locale);
+  const fetched = await listEntities(fetchImpl, locale);
 
   // Validate every entity before anything is written. One bad entity throws here and
   // nothing below runs — the wholesale refusal this module exists to guarantee.
+  // The kind came off the tree with the bytes and is not re-derived here.
   const decoder = new TextDecoder('utf-8');
-  const parsed = fetched.map(({ path, bytes }) => ({ path, ...parsePost(path, decoder.decode(bytes)) }));
+  const parsed = fetched.map(({ kind, path, bytes }) => ({ path, ...parseEntity(kind, path, decoder.decode(bytes)) }));
 
   // ---------------------------------------------------------------------------------------------
   // ADMITTED ONLY IF IT SURVIVES THE ROUND TRIP, BYTE FOR BYTE.
@@ -104,11 +115,15 @@ export async function importPosts({ client, api, fetchImpl, locale }) {
   const refused = [];
 
   for (const entity of parsed) {
-    const { path, frontmatter, body, source } = entity;
+    const { kind, path, frontmatter, source } = entity;
     let content;
     try {
-      content = blocksToMarkup(api, mdastToBlocks(body));
-      const verified = exportPost({
+      // PER KIND, through the entity's OWN kind, both ways. A post's blocks come from its
+      // markdown body and a page's are already the contract's, and the check is only worth
+      // anything if the export half uses the same kind the import half did.
+      content = blocksToMarkup(api, kindSpec(kind, `import ${path}`).toBlocks(entity));
+      const verified = exportEntity({
+        kind,
         api,
         markup: content,
         frontmatter,
@@ -125,7 +140,7 @@ export async function importPosts({ client, api, fetchImpl, locale }) {
     admitted.push({ ...entity, content });
   }
 
-  const entries = admitted.map(({ path, frontmatter, content, source }) => ({
+  const entries = admitted.map(({ kind, path, frontmatter, content, source }) => ({
     contractId: frontmatter.id,
     title: frontmatter.title,
     slug: frontmatter.slug,
@@ -134,6 +149,8 @@ export async function importPosts({ client, api, fetchImpl, locale }) {
     content,
     source,
     path,
+    kind,
+    postType: KINDS[kind].wpPostType,
   }));
 
   const root = await client.documentRoot;

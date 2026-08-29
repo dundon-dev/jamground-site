@@ -12,28 +12,24 @@ import { createHash } from 'crypto';
 import path from 'path';
 import http from 'http';
 import { fileURLToPath } from 'url';
-import { CONTENT_BLOB_BASE, CONTENT_TREE_URL } from '../../config.mjs';
+import { CONTENT_BLOB_BASE } from '../../config.mjs';
+import { parseEntity } from '../../lib/entity.mjs';
+import { listSeedEntities } from './seed-entities.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const editorDir = path.join(__dirname, '../../');
 const distDir = path.join(editorDir, 'dist');
 
-/* The seed posts are DISCOVERED, not listed. Naming them — as this file used to, by URL and
- * by contract id — tied an assertion about post meta to one repository's filenames at one
- * moment; the files it named no longer exist, and a fork's content repository was never going
- * to hold them. What is actually being asserted is byte identity between what GitHub serves
- * and what wp-admin stored, so the comparison is keyed on `_jamground_path` — the path import
- * itself recorded — and the expected bytes are fetched from that same path. Nothing here has
- * to know what the repository contains. */
-async function listSeedPosts() {
-  const res = await fetch(CONTENT_TREE_URL);
-  if (!res.ok) throw new Error(`Failed to fetch the content tree: ${res.status} ${CONTENT_TREE_URL}`);
-  const data = await res.json();
-  return (data.tree || [])
-    .map((entry) => entry.path)
-    .filter((p) => typeof p === 'string' && p.startsWith('content/posts/') && p.endsWith('.md'))
-    .sort();
-}
+/* The seed entities are DISCOVERED, not listed, and the discovery is shared (see
+ * ./seed-entities.mjs) and derived from the kind table. Naming them — as this file used to, by
+ * URL and by contract id — tied an assertion about post meta to one repository's filenames at
+ * one moment; the files it named no longer exist, and a fork's content repository was never
+ * going to hold them. Filtering to `content/posts/**.md`, as it did next, was the same mistake
+ * one level up: it pinned a stage of this editor rather than a property of import, and would
+ * now report both pages as entities that failed to arrive. What is actually being asserted is
+ * byte identity between what GitHub serves and what wp-admin stored, so the comparison is keyed
+ * on `_jamground_path` — the path import itself recorded — and the expected bytes are fetched
+ * from that same path. */
 
 async function buildBundle() {
   execSync(`node ${path.join(editorDir, 'build.mjs')}`, {
@@ -91,16 +87,18 @@ test('post-meta: _jamground_id and _jamground_source round-trip with byte identi
   const { server, port } = await startServer();
   const baseUrl = `http://localhost:${port}`;
 
-  // Pre-fetch every locale post the repository actually holds, keyed by its path.
-  const seedPaths = await listSeedPosts();
+  // Pre-fetch every entity the repository actually holds, of every kind, keyed by its path.
+  const seedEntities = await listSeedEntities();
+  const seedPaths = seedEntities.map((e) => e.path);
   assert(
-    seedPaths.length >= 1,
-    'the content repository should expose at least one locale post, or this test asserts nothing',
+    seedEntities.length >= 1,
+    'the content repository should expose at least one entity, or this test asserts nothing',
   );
   const seedPostsByPath = {};
-  for (const seedPath of seedPaths) {
+  for (const { kind, path: seedPath } of seedEntities) {
     const content = await fetchSeedPostContent(`${CONTENT_BLOB_BASE}/${seedPath}`);
     seedPostsByPath[seedPath] = {
+      kind,
       bytes: content,
       hash: calculateSha256(content),
     };
@@ -138,6 +136,7 @@ test('post-meta: _jamground_id and _jamground_source round-trip with byte identi
         `'jid'=>get_post_meta(${id},'_jamground_id',true),` +
         `'src'=>get_post_meta(${id},'_jamground_source',true),` +
         `'path'=>get_post_meta(${id},'_jamground_path',true),` +
+        `'kind'=>get_post_meta(${id},'_jamground_kind',true),` +
         `'media_ref'=>get_post_meta(${id},'_jamground_media_ref',true)` +
         `];`
       ).join('\n');
@@ -151,7 +150,7 @@ test('post-meta: _jamground_id and _jamground_source round-trip with byte identi
     assert.equal(
       Object.keys(map).length,
       seedPaths.length,
-      `every seed post should have been imported; expected ${seedPaths.length}, got ${Object.keys(map).length}`,
+      `every seed entity should have been imported; expected ${seedEntities.length}, got ${Object.keys(map).length}`,
     );
 
     // Verify each imported post's meta
@@ -171,20 +170,27 @@ test('post-meta: _jamground_id and _jamground_source round-trip with byte identi
         typeof meta.src === 'string',
         `_jamground_source should be a string, got ${typeof meta.src}`
       );
-      assert(
-        meta.src.startsWith('---'),
-        '_jamground_source should start with frontmatter fence'
-      );
-
-      // The path import recorded is a real file in the repository, and it is the file the
-      // stored bytes are compared against — so a post whose source was truncated or
-      // re-serialized fails here, and so does one that recorded a path it never read.
+      // The stored bytes must parse as the kind the row declares. This used to assert
+      // `startsWith('---')`, which is a fact about the POST format — a page is a whole YAML
+      // document with no fence, so that assertion would have failed every page here. Parsing
+      // with the real parser is a stronger claim anyway: the bytes are a valid entity, not
+      // merely a string beginning with three hyphens.
       assert(
         seedPostsByPath[meta.path],
         `_jamground_path should name a file the content repository holds; got ${JSON.stringify(meta.path)}, ` +
         `known: ${seedPaths.join(', ')}`
       );
+      assert.equal(
+        meta.kind,
+        seedPostsByPath[meta.path].kind,
+        `_jamground_kind should be the kind ${meta.path} implies, got ${JSON.stringify(meta.kind)}`
+      );
+      parseEntity(meta.kind, meta.path, meta.src);
 
+      // The path import recorded is a real file in the repository (asserted just above, since
+      // the kind check needs it too), and it is the file the stored bytes are compared
+      // against — so an entity whose source was truncated or re-serialized fails here, and so
+      // does one that recorded a path it never read.
       // Calculate SHA-256 of the stored meta value
       const storedHash = calculateSha256(meta.src);
       const expectedHash = seedPostsByPath[meta.path].hash;

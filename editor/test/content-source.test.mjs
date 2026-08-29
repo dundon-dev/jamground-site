@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { listPosts } from '../lib/content-source.mjs';
+import { listEntities, listPosts } from '../lib/content-source.mjs';
 import { CONTENT_BLOB_BASE, CONTENT_BRANCH, CONTENT_REPO, CONTENT_TREE_URL } from '../config.mjs';
 
 /* The two endpoints, derived from the fork's own declaration rather than spelled out — a
@@ -30,68 +30,76 @@ test('the endpoints the content source reads are the two public GitHub ones, for
   assert.match(CONTENT_REPO, /^[^/\s]+\/[^/\s]+$/);
 });
 
-test('listPosts fetches tree and filters to locale posts', async () => {
-  const calls = [];
+/* The tree this fork actually has a shape like, with one entry per exclusion the filter is
+ * meant to make and one per kind it is meant to admit.
+ *
+ * Pages used to sit in the excluded half of this fixture — as `content/pages/about.md`, which
+ * is not even the extension a page has. That pinned a SCOPE BOUNDARY ("the editor only loads
+ * posts") as though it were a principle, and the boundary was the defect: the two pages are
+ * most of the live site. What is a principle, and what stays asserted below, is the shape of
+ * the exclusions — another locale, a directory no kind claims, a file at the repository root —
+ * plus one that only exists once a kind has an extension of its own: the right directory with
+ * the wrong extension.
+ */
+const TREE = [
+  { path: 'content/posts/en-US/first-post.md' },     // in: post
+  { path: 'content/posts/en-US/second-post.md' },    // in: post
+  { path: 'content/pages/en-US/home.yaml' },         // in: page
+  { path: 'content/pages/en-US/about.yaml' },        // in: page
+  { path: 'content/posts/fr-FR/french-post.md' },    // out: another locale
+  { path: 'content/pages/fr-FR/accueil.yaml' },      // out: another locale
+  { path: 'content/pages/en-US/notes.md' },          // out: pages are .yaml, not .md
+  { path: 'content/posts/en-US/notes.yaml' },        // out: posts are .md, not .yaml
+  { path: 'content/authors/en-US/john.yaml' },       // out: no kind claims authors yet
+  { path: 'content/navigation/en-US/primary.yaml' }, // out: not a document
+  { path: 'content/settings/site.yaml' },            // out: not a document
+  { path: 'nav.md' },                                // out: repository root
+  { path: 'settings.yml' },                          // out: repository root
+  { path: 'README.md' },                             // out: repository root
+  { path: 'other.txt' },                             // out: repository root
+  { path: 'content/posts/es-ES/spanish-post.md' },   // out: another locale
+];
 
-  // Mock fetch that records calls and returns tree and blob responses
-  const mockFetch = (url, opts) => {
+const ADMITTED = [
+  ['post', 'content/posts/en-US/first-post.md'],
+  ['post', 'content/posts/en-US/second-post.md'],
+  ['page', 'content/pages/en-US/home.yaml'],
+  ['page', 'content/pages/en-US/about.yaml'],
+];
+
+function treeFetch(calls) {
+  return (url, opts) => {
     calls.push({ url, opts });
 
-    // Tree endpoint
     if (url === TREE_URL) {
+      return Promise.resolve({ ok: true, json: async () => ({ tree: TREE }) });
+    }
+
+    const hit = ADMITTED.find(([, path]) => url === blobUrl(path));
+    if (hit) {
       return Promise.resolve({
         ok: true,
-        json: async () => ({
-          tree: [
-            { path: 'content/posts/en-US/first-post.md' },
-            { path: 'content/posts/en-US/second-post.md' },
-            { path: 'content/posts/fr-FR/french-post.md' },
-            { path: 'content/pages/about.md' },
-            { path: 'content/authors/john.md' },
-            { path: 'nav.md' },
-            { path: 'settings.yml' },
-            { path: 'README.md' },
-            { path: 'other.txt' },
-            { path: 'content/posts/es-ES/spanish-post.md' },
-          ],
-        }),
+        arrayBuffer: async () => new TextEncoder().encode(`bytes of ${hit[1]}`),
       });
     }
 
-    // Blob endpoint for first post
-    if (url === blobUrl('content/posts/en-US/first-post.md')) {
-      return Promise.resolve({
-        ok: true,
-        arrayBuffer: async () => new TextEncoder().encode('# First Post\n\nContent here.'),
-      });
-    }
-
-    // Blob endpoint for second post
-    if (url === blobUrl('content/posts/en-US/second-post.md')) {
-      return Promise.resolve({
-        ok: true,
-        arrayBuffer: async () => new TextEncoder().encode('# Second Post\n\nMore content.'),
-      });
-    }
-
-    // Unknown URL
-    return Promise.resolve({
-      ok: false,
-      status: 404,
-    });
+    // Anything the filter should not have asked for answers 404, so a widened filter fails
+    // loudly here rather than quietly fetching more than it should.
+    return Promise.resolve({ ok: false, status: 404 });
   };
+}
 
-  const result = await listPosts(mockFetch, 'en-US');
+test('listEntities fetches the tree and filters to this locale\'s posts AND pages', async () => {
+  const calls = [];
+  const result = await listEntities(treeFetch(calls), 'en-US');
 
-  // Should have called tree endpoint first
+  // Tree first, then one blob per admitted entity, in the tree's own order.
   assert.equal(calls[0].url, TREE_URL);
-
-  // Should have called blob endpoints for the two en-US posts
-  assert.equal(calls[1].url, blobUrl('content/posts/en-US/first-post.md'));
-  assert.equal(calls[2].url, blobUrl('content/posts/en-US/second-post.md'));
-
-  // Should have exactly 3 calls (tree + 2 blobs)
-  assert.equal(calls.length, 3);
+  assert.deepEqual(
+    calls.slice(1).map((c) => c.url),
+    ADMITTED.map(([, path]) => blobUrl(path)),
+  );
+  assert.equal(calls.length, ADMITTED.length + 1, 'tree plus exactly one blob per admitted entity');
 
   // Verify no Authorization header was sent
   calls.forEach((call) => {
@@ -101,12 +109,21 @@ test('listPosts fetches tree and filters to locale posts', async () => {
     }
   });
 
-  // Result should have 2 posts with path and bytes
-  assert.equal(result.length, 2);
-  assert.equal(result[0].path, 'content/posts/en-US/first-post.md');
-  assert.equal(typeof result[0].bytes, 'object');
-  assert.equal(result[1].path, 'content/posts/en-US/second-post.md');
-  assert.equal(typeof result[1].bytes, 'object');
+  // THE KIND COMES OFF THE TREE AND TRAVELS WITH THE BYTES. Nothing downstream re-derives it,
+  // so nothing downstream can derive it differently.
+  assert.deepEqual(result.map(({ kind, path }) => [kind, path]), ADMITTED);
+  result.forEach((entity) => assert.equal(typeof entity.bytes, 'object'));
+});
+
+test('listPosts still narrows to posts alone', async () => {
+  const calls = [];
+  const result = await listPosts(treeFetch(calls), 'en-US');
+
+  assert.deepEqual(
+    result.map(({ kind, path }) => [kind, path]),
+    ADMITTED.filter(([kind]) => kind === 'post'),
+  );
+  assert.equal(calls.length, 3, 'tree plus the two posts — no page blob is fetched');
 });
 
 test('listPosts throws on tree fetch 404', async () => {

@@ -32,7 +32,8 @@ import path from 'path';
 import http from 'http';
 import { fileURLToPath } from 'url';
 import { VOCAB } from '../../lib/vocabulary.mjs';
-import { parsePost } from '../../lib/entity.mjs';
+import { parseEntity } from '../../lib/entity.mjs';
+import { KINDS } from '../../lib/kinds.mjs';
 import { CONTENT_REPO } from '../../config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -266,13 +267,20 @@ test('a title typed in wp-admin reaches the committed blob, with slug unmoved an
       const root = await c.documentRoot;
       const code = `<?php require '${root}/wp-load.php'; echo json_encode([`
         + `'src' => get_post_meta(${postId}, '_jamground_source', true),`
+        + `'kind' => get_post_meta(${postId}, '_jamground_kind', true),`
         + `'path' => get_post_meta(${postId}, '_jamground_path', true)]);`;
       const result = await c.run({ code });
       return JSON.parse(result.text);
     }, { postId: editedPostId });
     const baselineSource = baselineMeta.src;
     const baselinePath = baselineMeta.path;
-    const { frontmatter: baseline } = parsePost(`post-${editedPostId}`, baselineSource);
+    // The row's OWN kind, read from the meta import wrote — not assumed to be `post`. The
+    // first entity in the import map is whichever the repository lists first, and since pages
+    // are imported that is a page here; `parsePost` would have thrown "Missing frontmatter
+    // fence" on a file that has no fence to miss.
+    const baselineKind = baselineMeta.kind;
+    assert.ok(KINDS[baselineKind], `the edited row must declare a known kind, got ${JSON.stringify(baselineKind)}`);
+    const { frontmatter: baseline } = parseEntity(baselineKind, baselinePath, baselineSource);
     assert.ok(baseline.slug, 'the baseline post must carry a slug to compare against');
     assert.ok(baseline.updatedAt, 'the baseline post must carry updatedAt to compare against');
     assert.ok(baselinePath, 'the baseline post must carry the path it was imported from');
@@ -324,7 +332,7 @@ test('a title typed in wp-admin reaches the committed blob, with slug unmoved an
     const newBlobs = blobsPosted.slice(blobsBeforeThisSave);
     assert.equal(newBlobs.length, 1, 'the headline edit alone commits exactly one blob');
     const [blob] = newBlobs;
-    const { frontmatter: written } = parsePost(`post-${editedPostId}`, blob.content);
+    const { frontmatter: written } = parseEntity(baselineKind, baselinePath, blob.content);
 
     // The tree entry path must be exact. It used to be spelled out here, which was only
     // ever right while one particular file existed in one particular content repository —
@@ -341,7 +349,15 @@ test('a title typed in wp-admin reaches the committed blob, with slug unmoved an
     assert.equal(tree.tree.length, 1, 'the tree should carry exactly one entry');
     const [treeEntry] = tree.tree;
     assert.equal(treeEntry.path, baselinePath, 'the tree entry path must be the path the post was read from');
-    assert.match(baselinePath, /^content\/posts\/[a-z]{2}-[A-Z]{2}\/[^/]+\.md$/, 'and that path must be a locale post file');
+    // The shape of that path is the KIND'S, from the table: `content/<dir>/<locale>/<name><ext>`.
+    // Spelled out as a posts-only regex it was a fact about one kind, and would refuse the
+    // page this test now edits.
+    const { dir, ext } = KINDS[baselineKind];
+    assert.match(
+      baselinePath,
+      new RegExp(`^content/${dir}/[a-z]{2}-[A-Z]{2}/[^/]+\\${ext}$`),
+      `and that path must be a locale ${baselineKind} file`,
+    );
 
     // The typed headline reaches the committed blob.
     assert.equal(written.title, NEW_TITLE);

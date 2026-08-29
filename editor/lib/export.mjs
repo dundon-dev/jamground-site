@@ -1,21 +1,25 @@
-// Export: Gutenberg block markup -> a contract post, on save.
-//   1. Parse block markup from the modified post
+// Export: Gutenberg block markup -> a contract entity, on save.
+//   1. Parse block markup from the modified entity
 //   2. Map blocks back to contract types; fail loudly on any unmapped
 //      block or non-contract attribute
 //   3. (media rewrite — out of scope: the seed repository has none)
 //   4. Preserve `id`, append to `slugHistory` if `slug` changed, update `updatedAt`
 //   5. (write/commit/push — the shell's job, not this pure module's)
 //
+// Steps 1-4 are the same for every kind: block markup is block markup, and the envelope rules
+// are the envelope's. The kind is consulted ONCE, at the final assembly — a post's blocks
+// become markdown behind a frontmatter fence, a page's are a field of its own YAML document —
+// and that assembly is the kind table's `serialise`, not a `switch` here.
+//
 // The four contract block types in scope — heading, paragraph, list, quote — are exactly
 // the ones `blocks-to-wp.mjs` (the reverse direction) and `blocks-to-mdast.mjs` cover: what
-// the two seed posts exercise. A block outside `attribute-guard.mjs`'s allowlist is refused
+// the seed content exercises. A block outside `attribute-guard.mjs`'s allowlist is refused
 // there; one inside it but outside these four throws here, naming itself, rather than being
 // silently dropped.
 import { guardExportTree } from './attribute-guard.mjs';
 import { htmlToInline } from './html-to-inline.mjs';
 import { blocksToMdast } from './blocks-to-mdast.mjs';
-import { write } from '../../src/lib/canonical.ts';
-import { Post } from '../../src/contract/entities.ts';
+import { kindSpec } from './kinds.mjs';
 import { unified } from 'unified';
 import remarkStringify from 'remark-stringify';
 import remarkGfm from 'remark-gfm';
@@ -99,18 +103,27 @@ export function markupToBody(api, markup) {
   return stringifier.stringify(blocksToMdast(blocks));
 }
 
-/** The export path in full: block markup plus the post's envelope
+/** The export path in full: block markup plus the entity's envelope
  *  fields -> a canonical contract file, ready to write under `content/`.
  *
- * `frontmatter` is the Post envelope with whatever the editor changed already applied by
- * the caller — deciding what changed is the caller's job (it has session state this pure
- * module does not); this function's job is steps 2 and 4. `id` is carried through
+ * `kind` names the row of the kind table that decides what the finished file looks like. It is
+ * REQUIRED and is not defaulted: a missing kind means the caller lost track of what it was
+ * holding, and guessing "post" would write a page out as fenced markdown — the exact silent
+ * corruption the kind table exists to prevent. `kindSpec` throws instead, naming it.
+ *
+ * Everything before that final assembly is kind-independent and stays here. `frontmatter` is
+ * the contract envelope — a page's `blocks` field is NOT part of it (entity.mjs lifts it out),
+ * because the blocks written are the ones the editor just produced, not the ones on disk —
+ * with whatever the editor changed already applied by the caller; deciding what changed is the
+ * caller's job (it has session state this pure module does not). `id` is carried through
  * unconditionally because `frontmatter` already has it and this function never touches it.
  * `previousSlug` is the slug the file on disk currently has; `slugHistory` grows only when
- * `frontmatter.slug` differs from it. `updatedAt` is supplied by the caller — a pure module
- * does not read the wall clock. */
-export function exportPost({ api, markup, frontmatter, previousSlug, updatedAt }) {
-  const body = markupToBody(api, markup);
+ * `frontmatter.slug` differs from it, and a kind may also refuse a particular rename (pages
+ * refuse losing the homepage). `updatedAt` is supplied by the caller — a pure module does not
+ * read the wall clock. */
+export function exportEntity({ kind, api, markup, frontmatter, previousSlug, updatedAt }) {
+  const spec = kindSpec(kind, 'exportEntity');
+  const blocks = markupToContractBlocks(api, markup);
 
   const history = frontmatter.slug !== previousSlug
     ? [...(frontmatter.slugHistory ?? []), previousSlug]
@@ -120,6 +133,16 @@ export function exportPost({ api, markup, frontmatter, previousSlug, updatedAt }
   if (history && history.length > 0) next.slugHistory = history;
   else delete next.slugHistory;
 
-  const yamlFrontmatter = write(next, Post);
-  return `---\n${yamlFrontmatter}---\n\n${body.trimEnd()}\n`;
+  return spec.serialise({
+    frontmatter: next,
+    blocks,
+    previousSlug,
+    toMarkdown: (bs) => stringifier.stringify(blocksToMdast(bs)),
+  });
+}
+
+/** The post-shaped entry point, kept as a thin wrapper for the tests whose subject really is
+ *  posts. */
+export function exportPost(args) {
+  return exportEntity({ ...args, kind: 'post' });
 }

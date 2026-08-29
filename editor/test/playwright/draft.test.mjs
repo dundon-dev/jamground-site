@@ -12,6 +12,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import http from 'http';
 import { fileURLToPath } from 'url';
+import { KINDS } from '../../lib/kinds.mjs';
+import { listSeedEntities } from './seed-entities.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const editorDir = path.join(__dirname, '../../');
@@ -58,6 +60,11 @@ function startServer() {
 test('draft: the draft post is imported, listed and editable', async () => {
   await buildBundle();
 
+  // Asked of the repository, not written down: this used to be the literal 2, which was a
+  // fact about a seed that no longer exists. The repository now holds three entities across
+  // two kinds, and a literal here would be wrong again the next time the seed moves.
+  const seedEntities = await listSeedEntities();
+
   const { server, port } = await startServer();
   const baseUrl = `http://localhost:${port}`;
 
@@ -83,9 +90,13 @@ test('draft: the draft post is imported, listed and editable', async () => {
     const map = await page.evaluate(() => window.jamgroundImportResult);
     assert(map, 'import should have produced a contract-id -> post-id map');
 
-    // 1. Both seed posts exist after import — two posts, no more
+    // 1. Every seed entity exists after import — that many rows, no more
     const contractIds = Object.keys(map);
-    assert.equal(contractIds.length, 2, `expected exactly two imported posts, got: ${contractIds.length}`);
+    assert.equal(
+      contractIds.length,
+      seedEntities.length,
+      `expected one imported row per entity in the repository (${seedEntities.length}), got: ${contractIds.length}`,
+    );
 
     // 2. Get post_status for each post via client API
     const postStatuses = await page.evaluate(async (map) => {
@@ -93,7 +104,8 @@ test('draft: the draft post is imported, listed and editable', async () => {
       const root = await c.documentRoot;
       const ids = Object.values(map);
       const phpEntries = ids.map((id) =>
-        `$out[${JSON.stringify(String(id))}] = ['status'=>get_post_status(${id}),'jid'=>get_post_meta(${id},'_jamground_id',true)];`
+        `$out[${JSON.stringify(String(id))}] = ['status'=>get_post_status(${id}),'jid'=>get_post_meta(${id},'_jamground_id',true),`
+        + `'kind'=>get_post_meta(${id},'_jamground_kind',true),'type'=>get_post_type(${id})];`
       ).join('\n');
       const code = `<?php require '${root}/wp-load.php'; $out = []; ${phpEntries} echo json_encode($out);`;
       const s = await c.run({ code });
@@ -109,13 +121,23 @@ test('draft: the draft post is imported, listed and editable', async () => {
 
     // Check that the draft post has the expected ID
     const draftMeta = postStatuses[draftPostId];
+    const publishMeta = postStatuses[publishPostId];
+    // The row's declared kind and WordPress's own post type must agree, on every row — the
+    // same three-way agreement read-posts.mjs enforces before it will export anything.
+    for (const [id, m] of Object.entries(postStatuses)) {
+      assert.equal(m.type, KINDS[m.kind].wpPostType, `row ${id} declares kind ${m.kind} but is filed as ${m.type}`);
+    }
     assert.equal(draftMeta.jid, '01M0BSHRGY5ZASDV3325D7XWXG', `draft post should have the expected _jamground_id`);
 
     // 3. Both appear in the wp-admin post list
-    // First check the draft post list
-    await page.evaluate(async () => {
-      await window.jamgroundClient.goTo('/wp-admin/edit.php?post_status=draft&post_type=post');
-    });
+    // First check the draft post list. The type is the DRAFT ROW'S OWN, from the kind table —
+    // `post_type=post` was hardcoded, and with pages imported it lists only half of what the
+    // shell put into wp-admin while still satisfying a `>= 1` count, which is the worst kind
+    // of green: an assertion that keeps passing while measuring the wrong thing.
+    const draftType = KINDS[draftMeta.kind].wpPostType;
+    await page.evaluate(async (t) => {
+      await window.jamgroundClient.goTo(`/wp-admin/edit.php?post_status=draft&post_type=${t}`);
+    }, draftType);
 
     let draftListFrame = null;
     const listDeadline = Date.now() + 60000;
@@ -133,10 +155,11 @@ test('draft: the draft post is imported, listed and editable', async () => {
     const draftRowCount = await draftListFrame.locator('.wp-list-table tbody tr').count();
     assert(draftRowCount >= 1, 'the imported draft should appear in the draft post list');
 
-    // Check the published post list
-    await page.evaluate(async () => {
-      await window.jamgroundClient.goTo('/wp-admin/edit.php?post_status=publish&post_type=post');
-    });
+    // Check the published post list, likewise under the published row's own type.
+    const publishType = KINDS[publishMeta.kind].wpPostType;
+    await page.evaluate(async (t) => {
+      await window.jamgroundClient.goTo(`/wp-admin/edit.php?post_status=publish&post_type=${t}`);
+    }, publishType);
 
     let publishListFrame = null;
     const publishListDeadline = Date.now() + 60000;
