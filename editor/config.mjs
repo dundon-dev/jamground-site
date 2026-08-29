@@ -1,14 +1,20 @@
 /* editor/config.mjs — what the shell needs, re-derived from the one root declaration.
  *
- * The shell runs in a browser, so nothing here may read `process.env`, and the values below
- * must survive esbuild's bundle of editor/entry.mjs with no `define`, no plugin and no flag
- * — see the header of ../jamground.config.mjs for why that constraint is the whole design.
- * A plain relative import satisfies it: esbuild follows it, and `node --test` follows it too,
- * so the twenty-one pure-Node tests under editor/test/ resolve these values with no build
- * step and no environment set.
+ * The shell runs in a browser, so nothing HERE reads `process.env`: this module derives, and
+ * only derives. The single place that touches the environment is ../jamground.config.mjs, which
+ * resolves each of its six through a static `process.env.JAMGROUND_…` expression that
+ * editor/build.mjs substitutes with esbuild `define` — so what reaches the browser is string
+ * literals. That is asserted rather than assumed: editor/test/bundles-for-browser.test.mjs
+ * fails if any module authored in this repository leaves a `process.env` in the bundle, and if
+ * the defines stop substituting. See ../jamground.config.mjs's header for the argument.
+ *
+ * A plain relative import is what connects the two, and it is still doing the same work it
+ * always did: esbuild follows it, and `node --test` follows it too, so the twenty-one pure-Node
+ * tests under editor/test/ resolve these values with no build step — getting the committed
+ * placeholders when no environment is set.
  *
  * Nothing is declared here. Every export is derived from ../jamground.config.mjs, so a fork
- * changes six lines in one file and this module follows.
+ * sets six variables in one gitignored `.env` and this module follows.
  */
 import {
   contentBranch,

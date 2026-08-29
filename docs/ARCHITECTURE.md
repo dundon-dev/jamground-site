@@ -53,8 +53,10 @@ static files and two small Node services (below).
 The editor shell is a registered GitHub OAuth App's callback (`https://edit.<domain>/`). Its
 public Client ID is declared once, in `jamground.config.mjs`, and re-derived for the browser
 bundle in `editor/config.mjs` — it is public by design, since it ends up in the shipped
-JavaScript regardless of where it is written, so keeping it in git costs nothing and keeps the
-bundle reviewable.
+JavaScript regardless of where it is written. What is committed there is a placeholder of the
+right shape; the real one comes from `JAMGROUND_OAUTH_CLIENT_ID` in the operator's gitignored
+`.env` and is baked into the bundle by `editor/build.mjs` as an esbuild `define`, so the
+repository stays generic and the shipped bundle stays reviewable.
 
 The Client *secret* is a different thing entirely and never reaches git or the browser. Sign-in
 uses PKCE: the browser generates a code verifier and challenge, sends the challenge to GitHub's

@@ -25,29 +25,54 @@ secret; secrets are named by path only, in §Secrets.
 
 ## Configuration
 
-Six values declare the deployment's identity, declared once for the build and once for the
-converge. `npm run check:config` (part of `npm test`) fails if the two copies ever disagree:
+Copy `.env.example` to `.env` and fill it in. That is the whole of it — `.env` is gitignored,
+and it is the only file you edit. Nothing tracked in this repository ever holds a real value:
+`npm run check:config` (part of `npm test`) fails the build if one appears in a tracked file,
+and skips `.env` precisely because that is where they belong.
 
-| `jamground.config.mjs` | `infra/ansible/group_vars/all.yml` | Meaning |
-|---|---|---|
-| `domain` | `jamground_domain` | The apex the site is served from; `edit.`, `hooks.`, `preview.` hang off it. |
-| `githubOrg` | `jamground_github_org` | The GitHub organisation or user owning both repositories. |
-| `siteRepo` | `jamground_site_repo` | This repository's name. |
-| `contentRepo` | `jamground_content_repo` | The content repository's name. |
-| `contentBranch` | `jamground_content_branch` | The branch content publishes from. |
-| `oauthClientId` | `jamground_oauth_client_id` | The OAuth App's **public** client id — never the secret. |
+Six values declare the deployment's identity. Each is read from the environment by **both**
+halves — by `jamground.config.mjs` at build time and by `infra/ansible/group_vars/all.yml` at
+converge time — and each falls back to the generic placeholder committed beside it, so a clone
+that configures nothing still builds. `check:config` compares the two *declarations*, the
+variable and the fallback, and fails if they ever disagree:
 
-Edit both files together; everything else (site URL, editor origin, redirect URI, `org/repo`
-slugs) is derived from these six by rule.
+| Variable | `jamground.config.mjs` | `infra/ansible/group_vars/all.yml` | Meaning | If unset |
+|---|---|---|---|---|
+| `JAMGROUND_DOMAIN` | `domain` | `jamground_domain` | The apex the site is served from; `edit.`, `hooks.`, `preview.` hang off it. | `example.com` |
+| `JAMGROUND_GITHUB_ORG` | `githubOrg` | `jamground_github_org` | The GitHub organisation or user owning both repositories. | `your-org` |
+| `JAMGROUND_SITE_REPO` | `siteRepo` | `jamground_site_repo` | This repository's name. | `jamground-site` |
+| `JAMGROUND_CONTENT_REPO` | `contentRepo` | `jamground_content_repo` | The content repository's name. | `jamground-content` |
+| `JAMGROUND_CONTENT_BRANCH` | `contentBranch` | `jamground_content_branch` | The branch content publishes from. | `main` |
+| `JAMGROUND_OAUTH_CLIENT_ID` | `oauthClientId` | `jamground_oauth_client_id` | The OAuth App's **public** client id — never the secret. | `Ov23liEXAMPLE0CLIENT` |
 
-Three more values belong to *your machine*, never to the fork, and are never committed.
-`infra/ansible/inventory.yml` reads them from the environment (see `.env.example`):
+Everything else (site URL, editor origin, redirect URI, `org/repo` slugs) is derived from these
+six by rule, on both sides. An **empty** value counts as unset on both sides too, so a
+half-filled `.env` gets the placeholder rather than a blank.
+
+Three more values belong to *your machine*, never to the deployment, and are never committed.
+`infra/ansible/inventory.yml` reads them the same way:
 
 | Variable | Meaning | If unset |
 |---|---|---|
 | `JAMGROUND_VPS_HOST` | the box's address | `203.0.113.10` — unroutable, so a clone that configured nothing fails to connect rather than converging a stranger's server |
 | `JAMGROUND_VPS_SSH_USER` | the account Ansible connects as | `root` |
 | `JAMGROUND_VPS_SSH_KEY` | the private key on this machine | `~/.ssh/id_ed25519` |
+
+### Getting `.env` into the environment
+
+Neither Ansible nor Node reads `.env` on its own, and no dependency was added to make either of
+them do it. Source it into the environment instead, which is one line of shell and is the whole
+mechanism:
+
+```sh
+set -a; . ./.env; set +a
+```
+
+`set -a` marks every variable assigned from then on for export, so the plain `KEY=value` lines
+in `.env` become environment variables; `set +a` stops that again. Run it in the shell you are
+about to converge, build, or run `editor/build.mjs` from. Forget it and you get the
+placeholders — a site built for `example.com` and a converge aimed at an unroutable address —
+rather than a half-configured deployment.
 
 ## Secrets: what goes on the box, by hand
 
@@ -72,6 +97,7 @@ touches your machine or either repository.
 ## Converging
 
 ```sh
+set -a; . ./.env; set +a      # see §Configuration — without this you converge the placeholders
 cd infra/ansible
 ansible-playbook site.yml
 ```
@@ -107,16 +133,19 @@ checks connectivity:
 | `isolation.yml` | the build resource slices exist |
 | `selfcheck.yml` | the periodic self-check timer is installed and enabled |
 
-Run any of them the same way `site.yml` runs:
+Run any of them the same way `site.yml` runs, in a shell that has sourced `.env`:
 
 ```sh
+set -a; . ../../.env; set +a
 ansible-playbook -i inventory.yml verify/deploy.yml
 ```
 
 ## Deploying
 
 `content_repos` performs the first build. After that, a deploy is running the script `deploy`
-shipped, against the two already-cloned repositories:
+shipped, against the two already-cloned repositories. This one runs **on the box**, as the build
+account, so it takes its configuration from what the converge already put there rather than from
+your `.env`:
 
 ```sh
 sudo -u jamground-build \

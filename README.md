@@ -34,6 +34,11 @@ npm test                                                     # the gate — see 
 directory `../jamground-content`, so a normal side-by-side checkout of both repositories needs
 no configuration at all. Node version is pinned in `.nvmrc`.
 
+Every tracked file here is generic — `example.com`, `your-org`, an unroutable address. To build
+or deploy under your own name, copy `.env.example` to `.env` (gitignored), fill it in, and
+`set -a; . ./.env; set +a` before building or converging. Nothing loads it for you and nothing
+in git ever holds a real value; `npm test` fails if one appears. See `infra/RUNBOOK.md`.
+
 ## Repo map
 
 | Path | What's there |

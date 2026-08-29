@@ -12,17 +12,31 @@
 # These six are the SAME six declared in jamground.config.mjs at the repository root, which
 # is the build-time half. Two files declare them because the two halves genuinely run at
 # different times, on different machines, with no shared runtime; `tools/check-config.mjs`
-# (Rule A) compares them value for value and fails the build if they ever disagree, so the
-# duplication cannot become a divergence.
+# (Rule A) compares the two DECLARATIONS — the variable each side reads and the fallback each
+# side uses — and fails the build if they ever disagree, so the duplication cannot become a
+# divergence.
+#
+# EACH VALUE IS READ FROM THE ENVIRONMENT, exactly as inventory.yml already reads the three
+# below, and falls back to the generic placeholder committed beside it. That is what lets this
+# file stay generic in git while a real deployment is driven from a gitignored `.env`. Ansible
+# does not read `.env` itself and no dependency is added to make it: source it into the
+# environment first, which is the documented idiom in infra/RUNBOOK.md —
+#
+#     set -a; . ./.env; set +a
+#     ansible-playbook -i inventory.yml site.yml
+#
+# `| default(…, true)` rather than `| default(…)` on purpose: the `true` makes an EMPTY value
+# count as unset, so `JAMGROUND_DOMAIN=` in a `.env` means "I did not set this" here and in
+# jamground.config.mjs alike. The two halves would otherwise disagree about a blank line.
 #
 # The VPS address, ssh user and ssh key are NOT here. They belong to the operator's machine,
 # not to the fork, and are read from the environment by inventory.yml.
-jamground_domain: example.com
-jamground_github_org: your-org
-jamground_site_repo: jamground-site
-jamground_content_repo: jamground-content
-jamground_content_branch: main
+jamground_domain: "{{ lookup('env', 'JAMGROUND_DOMAIN') | default('example.com', true) }}"
+jamground_github_org: "{{ lookup('env', 'JAMGROUND_GITHUB_ORG') | default('your-org', true) }}"
+jamground_site_repo: "{{ lookup('env', 'JAMGROUND_SITE_REPO') | default('jamground-site', true) }}"
+jamground_content_repo: "{{ lookup('env', 'JAMGROUND_CONTENT_REPO') | default('jamground-content', true) }}"
+jamground_content_branch: "{{ lookup('env', 'JAMGROUND_CONTENT_BRANCH') | default('main', true) }}"
 
 # Public by design and carried in git. The client SECRET is
 # never here, never templated, and never leaves the box: roles/broker is told only its path.
-jamground_oauth_client_id: Ov23liEXAMPLE0CLIENT
+jamground_oauth_client_id: "{{ lookup('env', 'JAMGROUND_OAUTH_CLIENT_ID') | default('Ov23liEXAMPLE0CLIENT', true) }}"

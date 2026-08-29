@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { RETIRED_LITERALS, SHARED_VALUES } from '../../tools/check-config.mjs';
@@ -29,20 +29,49 @@ const NOTES = join(ROOT, TREE, 'NOTES.md');
 const CONFIG_JS = join(ROOT, TREE, 'jamground.config.mjs');
 const GROUP_VARS = join(ROOT, TREE, 'infra/ansible/group_vars/all.yml');
 
-const check = () => {
+const check = (env) => {
+  const options = { cwd: ROOT, encoding: 'utf8', env: { ...process.env, ...env } };
   try {
-    return { code: 0, json: JSON.parse(execFileSync('node', [join(ROOT, 'tools/check-config.mjs'), '--root', TREE, '--json'], { cwd: ROOT, encoding: 'utf8' })) };
+    return { code: 0, json: JSON.parse(execFileSync('node', [join(ROOT, 'tools/check-config.mjs'), '--root', TREE, '--json'], options)) };
   } catch (e) {
     return { code: e.status, json: e.stdout ? JSON.parse(e.stdout) : null };
   }
 };
 
 /** Rewrites `file` for the duration of `fn`, then restores it byte for byte. */
-const planted = (file, rewrite, fn) => {
-  const before = readFileSync(file, 'utf8');
-  try { writeFileSync(file, rewrite(before)); fn(check()); }
-  finally { writeFileSync(file, before); }
+const planted = (file, rewrite, fn) => plantedAll([[file, rewrite]], fn);
+
+/** The same, for a defect that only exists across two files — a declaration is a pair of
+ *  halves, so half the defects Rule A exists for cannot be planted in one file. */
+const plantedAll = (edits, fn, env) => {
+  const before = edits.map(([file]) => [file, readFileSync(file, 'utf8')]);
+  try {
+    for (const [file, rewrite] of edits) writeFileSync(file, rewrite(readFileSync(file, 'utf8')));
+    fn(check(env));
+  } finally {
+    for (const [file, text] of before) writeFileSync(file, text);
+  }
 };
+
+/** Creates files that are not in the fixture tree at all for the duration of `fn`. */
+const withFiles = (files, fn) => {
+  try {
+    for (const [file, text] of files) writeFileSync(file, text);
+    fn(check());
+  } finally {
+    for (const [file] of files) rmSync(file, { force: true });
+  }
+};
+
+// The env-driven shape of each half, as the real tree now writes it. The fixture stays plain
+// literals — that shape is still supported and still the one the drift tests above use — so
+// the env-driven shape is planted onto it here, one value at a time.
+const buildDeclares = (env, fallback) => (s) => `${s}\nexport const declarations = `
+  + `{ domain: { env: ${JSON.stringify(env)}, fallback: ${JSON.stringify(fallback)} } };\n`;
+const deployDeclares = (env, fallback) => (s) => s.replace(
+  /^jamground_domain: .*$/m,
+  `jamground_domain: "{{ lookup('env', '${env}') | default('${fallback}', true) }}"`,
+);
 
 const rules = (json) => json.problems.map((p) => p.rule);
 
@@ -123,6 +152,83 @@ test('Rule A: a missing deploy-time declaration file is a "could not run", not a
   }
 });
 
+test('Rule A: an env-driven pair that agrees on variable and fallback is clean', () => {
+  // The control for the three tests below. Without it they would prove only that the gate
+  // dislikes the env-driven shape, not that it compares the two halves of it.
+  plantedAll([
+    [CONFIG_JS, buildDeclares('JAMGROUND_DOMAIN', 'example.com')],
+    [GROUP_VARS, deployDeclares('JAMGROUND_DOMAIN', 'example.com')],
+  ], ({ code, json }) => {
+    assert.equal(code, 0, JSON.stringify(json?.problems, null, 2));
+    assert.equal(json.problems.length, 0);
+  });
+});
+
+test('Rule A: the two sides reading DIFFERENT environment variables is caught', () => {
+  // The defect that arrives with env-driven configuration, and the one a value comparison
+  // cannot see: both halves resolve to the same placeholder for as long as nobody sets
+  // anything, so the tree looks correct right up until the operator fills in a `.env` — at
+  // which point the build moves and the converge does not, or the other way about.
+  plantedAll([
+    [CONFIG_JS, buildDeclares('JAMGROUND_DOMAIN', 'example.com')],
+    [GROUP_VARS, deployDeclares('JAMGROUND_SITE_DOMAIN', 'example.com')],
+  ], ({ code, json }) => {
+    assert.equal(code, 1);
+    assert.deepEqual(rules(json), ['config-env-drift']);
+    assert.equal(json.problems[0].key, 'domain');
+    assert.equal(json.problems[0].build, 'JAMGROUND_DOMAIN');
+    assert.equal(json.problems[0].deploy, 'JAMGROUND_SITE_DOMAIN');
+  });
+});
+
+test('Rule A: fallbacks that disagree behind the same variable are caught', () => {
+  // What an unconfigured clone actually gets. Identical variable, different placeholder: the
+  // pair agrees whenever the variable is set and disagrees whenever it is not.
+  plantedAll([
+    [CONFIG_JS, buildDeclares('JAMGROUND_DOMAIN', 'example.com')],
+    [GROUP_VARS, deployDeclares('JAMGROUND_DOMAIN', 'example.org')],
+  ], ({ code, json }) => {
+    assert.equal(code, 1);
+    assert.deepEqual(rules(json), ['config-drift']);
+    assert.equal(json.problems[0].build, 'example.com');
+    assert.equal(json.problems[0].deploy, 'example.org');
+  });
+});
+
+test('Rule A: one side env-driven and the other a bare literal is itself a disagreement', () => {
+  // Half a migration. The literal side is pinned to the placeholder forever while the other
+  // half follows the environment, and nothing but this rule notices.
+  planted(CONFIG_JS, buildDeclares('JAMGROUND_DOMAIN', 'example.com'), ({ code, json }) => {
+    assert.equal(code, 1);
+    assert.deepEqual(rules(json), ['config-env-drift']);
+    assert.equal(json.problems[0].build, 'JAMGROUND_DOMAIN');
+    assert.equal(json.problems[0].deploy, null);
+  });
+});
+
+test('Rule A does not resolve either side: the environment cannot change its verdict', () => {
+  // The tautology this rule is written against. If it compared what the two halves RESOLVE to,
+  // then with the variable set they would agree no matter what they declared — the rule would
+  // report a success it did no work for — and with it unset it would compare a string against
+  // a Jinja expression and be red on a correct tree. Both verdicts below are taken with the
+  // variable set to something unlike either placeholder, and both are unchanged by it.
+  const env = { JAMGROUND_DOMAIN: 'set-by-the-test.example' };
+
+  plantedAll([
+    [CONFIG_JS, buildDeclares('JAMGROUND_DOMAIN', 'example.com')],
+    [GROUP_VARS, deployDeclares('JAMGROUND_DOMAIN', 'example.com')],
+  ], ({ code }) => assert.equal(code, 0, 'agreeing declarations stay clean with the variable set'), env);
+
+  plantedAll([
+    [CONFIG_JS, buildDeclares('JAMGROUND_DOMAIN', 'example.com')],
+    [GROUP_VARS, deployDeclares('JAMGROUND_DOMAIN', 'example.org')],
+  ], ({ code, json }) => {
+    assert.equal(code, 1, 'disagreeing fallbacks stay caught with the variable set — the moment '
+      + 'this passes, the rule has become a test of the environment rather than of the tree');
+    assert.deepEqual(rules(json), ['config-drift']);
+  }, env);
+});
+
 // ── Rule B ───────────────────────────────────────────────────────────────────────────────
 
 test('Rule B: every retired literal is caught in a source file', () => {
@@ -192,4 +298,24 @@ test('the gate never scans itself, and says so rather than hiding it', () => {
   }
   const { code } = check();
   assert.equal(code, 0);
+});
+
+test('Rule B skips `.env`, because that file is where the real values belong', () => {
+  // `.env` is gitignored and holds the operator's own domain, org and client id. Scanning it
+  // would make the gate red on correct usage — which would teach people to stop running it.
+  // Only the root `.env` is exempt, and only that name: `.env.example` is committed, so the
+  // very same string in it is still a violation. Both halves are asserted, because the
+  // exemption is only safe if it is that narrow.
+  const DOT_ENV = join(ROOT, TREE, '.env');
+  const DOT_ENV_EXAMPLE = join(ROOT, TREE, '.env.example');
+  const line = `JAMGROUND_DOMAIN=${RETIRED_LITERALS[1]}\n`;
+
+  withFiles([[DOT_ENV, line]], ({ code, json }) => {
+    assert.equal(code, 0, `a retired literal in .env is not a violation: ${JSON.stringify(json?.problems)}`);
+  });
+
+  withFiles([[DOT_ENV_EXAMPLE, line]], ({ code, json }) => {
+    assert.equal(code, 1, 'the same literal in the COMMITTED .env.example still is one');
+    assert.ok(json.problems.some((p) => p.file === '.env.example' && p.literal === RETIRED_LITERALS[1]));
+  });
 });

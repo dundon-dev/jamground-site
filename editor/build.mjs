@@ -1,13 +1,42 @@
 #!/usr/bin/env node
-// Build script for the shell - bundles entry.mjs and inlines blueprint.json
+/* Build script for the shell — bundles entry.mjs, inlines blueprint.json, and turns the
+ * deployment's identity into literals.
+ *
+ * THE DEFINES ARE THE WHOLE REASON THIS FILE IS IMPORTABLE. ../jamground.config.mjs resolves
+ * its six values from `process.env.JAMGROUND_…`, which does not exist in a browser. This
+ * script resolves them HERE, in Node — where a `.env` the operator sourced is visible — and
+ * hands esbuild a `define` map, so the shipped bundle contains the values as string literals
+ * and no `process.env` of ours at all. `browserDefines` is exported, and the module runs
+ * nothing on import, so editor/test/bundles-for-browser.test.mjs can assert against the exact
+ * map this build uses rather than a second copy of it that could quietly drift.
+ */
 
 import * as esbuild from 'esbuild';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { declarations } from '../jamground.config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, 'dist');
+
+/**
+ * The `define` map for a browser bundle: one entry per declared value, keyed by the exact
+ * static member expression ../jamground.config.mjs reads.
+ *
+ * An unset variable is defined as the empty string rather than left undefined, because the
+ * config module treats empty as unset and falls back — the same rule Ansible's
+ * `| default(…, true)` applies on the deploy side. Every entry is therefore a string literal,
+ * and nothing is left for the browser to resolve.
+ */
+export function browserDefines(env = process.env) {
+  return Object.fromEntries(
+    Object.values(declarations).map(({ env: variable }) => [
+      `process.env.${variable}`,
+      JSON.stringify(env[variable] ?? ''),
+    ]),
+  );
+}
 
 async function build() {
   try {
@@ -44,6 +73,7 @@ async function build() {
       platform: 'browser',
       sourcemap: true,
       minify: false,
+      define: browserDefines(),
       external: ['https://unpkg.com/*'],
     });
 
@@ -68,4 +98,8 @@ async function build() {
   }
 }
 
-build();
+// Guarded, so importing this module for `browserDefines` builds nothing.
+const invokedDirectly = process.argv[1]
+  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (invokedDirectly) build();
