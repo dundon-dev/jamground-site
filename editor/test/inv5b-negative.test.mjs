@@ -154,8 +154,12 @@ test('INV-5b Layer 3: paragraph with align attribute throws naming the attribute
 
 test('INV-5b Layer 3: layer is load-bearing — disabling it accepts non-contract attributes', async () => {
   await testWithModifiedModule('attribute-guard.mjs', {
-    "  for (const [key, value] of Object.entries(stripped)) {\n    if (allowed.has(key)) continue;\n    if (isDefaulted(blockType, key, value)) continue;\n    throw new Error(\n      `INV-5b layer 3: attribute \"${key}\" on block \"${name}\" has no contract representation`,\n    );\n  }":
-      "  // Layer 3 disabled - accept all attributes\n  for (const [key, value] of Object.entries(stripped)) {\n    // Allowlist check removed - pass all attributes through\n  }",
+    // Targets the REFUSAL, not the whole loop. The loop body gained a case — an attribute
+    // present but valued `undefined` is not set — and a mutation keyed to every line of it
+    // matched nothing from that moment on, mutating no code while still reporting a pass.
+    // The throw is what layer 3 IS, and it is the smallest thing that can be removed.
+    "    throw new Error(\n      `INV-5b layer 3: attribute \"${key}\" on block \"${name}\" has no contract representation`,\n    );":
+      "    // Layer 3 disabled - accept all attributes\n    continue;",
   }, async (tempDir, tempPath) => {
     // Verify the throwaway file was modified correctly
     const content = fs.readFileSync(tempPath, 'utf-8');

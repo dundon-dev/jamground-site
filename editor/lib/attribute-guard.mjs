@@ -94,6 +94,21 @@ export function guardBlockAttributes(api, block) {
 
   for (const [key, value] of Object.entries(stripped)) {
     if (allowed.has(key)) continue;
+    // PRESENT BUT UNSET IS NOT SET. `parse()` returns only the sourced attributes for markup
+    // that matches the registered `save()` byte for byte, and the WHOLE registered schema —
+    // every key, valued `undefined` — for markup that does not. The second case is ordinary
+    // here rather than exotic: the editor re-saves a heading as `<h2>` while the import path
+    // wrote `<h2 class="wp-block-heading">`, because the mu-plugin strips `className` support
+    // inside WordPress and the host-page registry that serialised the import has it. So an
+    // untouched heading arrives carrying `textAlign`, `fontSize`, `style` and ten more, all
+    // undefined, and refusing them refused every save of a page a person had merely opened.
+    //
+    // `isDefaulted` cannot answer this: it returns false whenever the attribute declares no
+    // `default` at all, which is exactly the case for `textAlign`. An attribute with no value
+    // carries no meaning for the contract to fail to represent, so it is not "set" and there
+    // is nothing to refuse. An attribute a person actually gave a value keeps its value here
+    // and is still refused below, which is the whole job of this layer.
+    if (value === undefined) continue;
     if (isDefaulted(blockType, key, value)) continue;
     throw new Error(
       `INV-5b layer 3: attribute "${key}" on block "${name}" has no contract representation`,
