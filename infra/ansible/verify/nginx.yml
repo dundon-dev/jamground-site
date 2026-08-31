@@ -51,8 +51,16 @@
 
     # The redirect above proves nothing about the target: a 301 to a path that then 404s is
     # still a 301. These two are the pair worth curling — the default
-    # locale's index page, and a real post, so a placeholder page cannot pass this by serving
+    # locale's index page, and the post index, so a placeholder page cannot pass this by serving
     # an empty /en-us/ with no content behind it.
+    #
+    # THE SECOND ONE USED TO NAME A POST BY SLUG, `/en-us/blog/launch/`, AND WENT RED WHEN THE
+    # CONTENT WAS RESEEDED — the post is `example-post` now, so this play failed on a stale
+    # assertion, several tasks before anything it was actually verifying. `/en-us/blog/` keeps
+    # the property that motivated naming a post at all: src/pages/[locale]/blog/index.astro
+    # emits NO route for a locale with no published post (test/conformance/lib/derive-routes.mjs
+    # re-derives the same rule), so a 200 here still proves there is content behind the locale —
+    # and it proves it about a route the content cannot rename out from under this file.
     - name: Request /en-us/ and require it serves
       ansible.builtin.uri:
         url: http://127.0.0.1/en-us/
@@ -60,12 +68,42 @@
           Host: "{{ jamground_domain }}"
         status_code: 200
 
-    - name: Request /en-us/blog/launch/ and require it serves
+    - name: Request /en-us/blog/ and require it serves
       ansible.builtin.uri:
-        url: http://127.0.0.1/en-us/blog/launch/
+        url: http://127.0.0.1/en-us/blog/
         headers:
           Host: "{{ jamground_domain }}"
         status_code: 200
+
+    # THE PREVIEW HOSTS, WHICH NOTHING HERE USED TO ASK ABOUT. Every request above carries the
+    # production Host, and so did jamground-selfcheck — so the preview vhost's own answer at `/`
+    # was asserted by nothing on the box and nothing offline. It was a 403 for the whole of this
+    # pipeline's life: the site emits no bare-root index.html, the production blocks compensate
+    # with a redirect, and the preview blocks did not have one. The editor's only link to a
+    # staging site is exactly that URL.
+    #
+    # pr-1 DOES NOT HAVE TO EXIST. `location = /` returns in the rewrite phase, before $prnum is
+    # resolved into a document root, so this asserts the server block's own answer and needs no
+    # open pull request to run against. Do not "fix" it by pointing it at a live preview number,
+    # which would make this play pass or fail on whether someone happens to be editing.
+    - name: Request / on a preview host with no redirects followed
+      ansible.builtin.uri:
+        url: http://127.0.0.1/
+        headers:
+          Host: "pr-1.preview.{{ jamground_domain }}"
+        follow_redirects: none
+        status_code: 301
+      register: preview_root_request
+
+    - name: Assert a preview host redirects / to /en-us/ exactly as production does
+      ansible.builtin.assert:
+        that:
+          - preview_root_request.location is defined
+          - preview_root_request.location is search('/en-us/$')
+        fail_msg: >-
+          / on a preview host did not redirect to /en-us/:
+          {{ preview_root_request.location | default('no Location header') }}
+          — the address the editor is handed for every change is the one that does not work.
 
     # The hooks vhost, asserted against the RENDERED configuration rather than the template that
     # produced it. This is the assertion that would have caught the bug it exists for: the

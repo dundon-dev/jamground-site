@@ -70,12 +70,26 @@ http {
     # pull request opens or moves, and removed when it closes. Neither costs a reload: the root is
     # resolved per request from the named capture, and the digit-only capture is the whole
     # path-traversal guard, because $prnum can never contain `/` or `..`.
+    #
+    # THE `location = /` REDIRECT IS THE SAME LINE THE PRODUCTION BLOCKS CARRY, AND IT IS NOT
+    # OPTIONAL HERE. This site emits no bare-root index.html — only the default locale's, which
+    # jamground-deploy and jamground-preview-build both assert on before publishing — so without
+    # it `/` falls through to try_files with no index to find and nginx answers 403. That is the
+    # ONE address jamground.config.mjs's previewUrlFor() hands an editor, so the whole preview
+    # feature read as broken while every preview behind it was building correctly. The target is
+    # RELATIVE: nginx's default `absolute_redirect on` resolves it against the request's own Host,
+    # so a preview redirects to its own /en-us/ and never to production. `return` is answered in
+    # the rewrite phase, before $prnum is resolved into a root, so it also costs nothing for a
+    # preview number that does not exist.
+    # test/gates/preview-work-root.test.mjs holds production and preview to the same answer at /.
     server {
         listen 80;
         server_name ~^pr-(?<prnum>[0-9]+)\.preview\.{{ nginx_domain | regex_escape }}$;
 
         root {{ nginx_previews_root }}/$prnum;
         index index.html;
+
+        location = / { return 301 /en-us/; }    # from Settings.defaultLocale
 
         location / {
             try_files $uri $uri/ =404;
@@ -93,6 +107,8 @@ http {
 
         root {{ nginx_previews_root }}/$prnum;
         index index.html;
+
+        location = / { return 301 /en-us/; }    # from Settings.defaultLocale
 
         location / {
             try_files $uri $uri/ =404;
