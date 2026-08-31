@@ -57,6 +57,24 @@ export async function getStaticPaths() {
       }));
     });
 }
+/* THE TITLE IS RENDERED HERE, and until it was, `page` was the only entity kind whose title
+ * never reached the page. blog/[slug], blog/index, authors/[slug] and tags/[tag] all emit the
+ * title as the h1; these two did not, so a page shipped with NO h1 at all and an h2 as its
+ * highest heading — an accessibility and SEO defect, not merely an inconsistency.
+ *
+ * The block catalogue is what settles it rather than taste: blocks.ts restricts `heading` to
+ * levels 2, 3 and 4, so an h1 CANNOT be authored as body content. That rule only makes sense if
+ * the template owns the h1, which is what this is.
+ *
+ * The consequence of the gap was duplication nobody could see was duplication: the seed content
+ * carried a level-2 heading block repeating the title, as a stand-in for the h1 that was never
+ * emitted. Editing the title then changed the browser tab and nothing on the page, which is
+ * exactly how it was reported.
+ *
+ * `page.data.title`, never `seo.title`. The seo override is for the document title and search
+ * results — what BaseLayout receives above — and an on-page heading that silently differed from
+ * the title an editor typed is the same class of surprise this is fixing. blog/[slug].astro
+ * already draws that line the same way. */
 ---
 
 <BaseLayout
@@ -64,6 +82,9 @@ export async function getStaticPaths() {
   description={page.data.seo?.description}
   locale={page.data.locale}
 >
+  <header class="site-page-header site-container">
+    <h1 class="site-page-title">{page.data.title}</h1>
+  </header>
   <div class="site-blocks">
     <BlockList blocks={blocks} />
   </div>

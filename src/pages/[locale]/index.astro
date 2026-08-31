@@ -56,6 +56,10 @@ export async function getStaticPaths() {
       };
     });
 }
+/* The title as the h1, on the same terms as [slug].astro — see the note there. The home
+ * page gets no exception: its title is its title, and an editor who wants different words
+ * on the page changes the title rather than learning that one route behaves unlike the
+ * other five. */
 ---
 
 <BaseLayout
@@ -63,6 +67,9 @@ export async function getStaticPaths() {
   description={page.data.seo?.description}
   locale={page.data.locale}
 >
+  <header class="site-page-header site-container">
+    <h1 class="site-page-title">{page.data.title}</h1>
+  </header>
   <div class="site-blocks">
     <BlockList blocks={blocks} />
   </div>
