@@ -25,12 +25,55 @@ so a compromised key exposes exactly the repository it was issued for and nothin
 Editors work in `wp-admin`. That `wp-admin` is not served by a PHP process anywhere — it is
 WordPress Playground, a WebAssembly build of WordPress that boots and runs entirely inside the
 visitor's own browser tab. `editor/entry.mjs` boots Playground from a blueprint and then writes
-one small file into Playground's in-memory filesystem: `editor/mu-plugin/jamground.php`, which
-restricts the block inserter to the set the contract can represent and strips block features the
-contract has no field for. That file is the only `.php` in this entire repository, and a
+one small file into Playground's in-memory filesystem: `editor/mu-plugin/jamground.php`. That
+file does three things, and the first is the oldest: it restricts the block inserter to the set
+the contract can represent and strips block features the contract has no field for. It also
+narrows the *surface* — the admin menu is Posts, Pages and Authors and nothing else, the
+dashboard's widgets and WordPress's own marketing and update notices are gone, and the rich-text
+toolbar offers only the four marks `InlineText` allows. And it rewrites WordPress's own links to
+the site (below). That file is the only `.php` in this entire repository, and a
 conformance test fails the build if a second one ever appears outside `editor/`, or if any
 import from the site's own build graph ever reaches into `editor/` at all — the two do not share
 code at runtime, only the contract they both import.
+
+What is trimmed is chosen by one test: whether a save path reads it back. `read-posts.mjs` reads
+three WordPress fields — `post_title`, `post_name`, `post_content` — so an excerpt, a featured
+image, a category, a page template and a discussion setting are all controls an editor can
+operate whose values cannot reach a commit. Those are removed. Status and visibility are not,
+because `import.mjs` sets `post_status` from the contract's own `status` and the distinction is
+true information about the entity; that an *edit* to it does not travel is a real remaining gap,
+and hiding the panel would conceal it rather than close it. `core/image` left the inserter for
+the harder version of the same reason: both mappers refuse it for want of a media path, so while
+it was offered an editor could do work that could not be saved anywhere.
+
+### wp-admin's own links name the site, not the WASM instance
+
+WordPress resolves "View Page", "Preview" and the admin bar's site name through `home_url()`,
+which in Playground is the scoped WASM origin with plain `?p=` permalinks — so every one of them
+used to open this instance's own theme rendering, at an address unrelated to the site. Nothing
+filtered them.
+
+The real address is not computed in PHP, and must not be: `src/lib/links.ts` holds the routing
+table exactly once. Each kind's helper is a field on its `KINDS` row (`sitePath`), so
+`editor/lib/site-links.mjs` calls the helper and stores the answer, and the result travels to PHP
+as a JSON data file — the same discipline `read-posts.mjs` states for the post-type list, where
+nothing composes PHP around a value. The mu-plugin does a lookup and no arithmetic.
+
+Which entities have an address depends on where the site currently is. While a change is open the
+origin is that change's staging host, which renders drafts; while none is open it is production,
+which does not — so a draft with no change open has no address anywhere, gets no entry, and its
+link is *removed* rather than pointed somewhere untrue. The same rule covers an entity created
+mid-session without a case of its own: no save has written it, so it is not in the map.
+
+Two things about this are worth knowing before reading a rewritten link as more than it is. The
+map is built from the slug **on disk**, not the one WordPress currently holds, because the
+staging site serves what the last save wrote — being one save behind is agreement with the site
+being linked to, not staleness. And WordPress's "Preview" means *see your unsaved draft*, which
+nothing here can do: the shell cannot reach Gutenberg's DOM across the Playground origin
+boundary, and staging rebuilds from the save, not from typing. It is pointed at the same real
+address as the permalink because that is the closest true thing, and the caveat is said in words
+on the shell's status line. A shell-owned preview control would let WordPress's button be removed
+honestly; `entry.mjs` already reserves the identifier and `VOCAB.preview` already exists for it.
 
 Because the mu-plugin runs inside a sandboxed, single-user WASM instance with no server behind
 it, it cannot be a security boundary — Playground has no concept of authorization to enforce.
@@ -193,13 +236,17 @@ which cannot fetch the merge it would be deploying. The automatic deploy below t
 preview build is running beside it — rather than being instantiated through this unit. (Its
 preview counterpart is no longer a placeholder either.)
 
-**Two paragraphs that used to be here have been discharged, and are worth keeping in outline
+**Three paragraphs that used to be here have been discharged, and are worth keeping in outline
 because each names a gap that looked exactly like a working feature.** Previews were built while
 the editor did not link to them; the shell now shows the staging address when a change opens, on
-save, and on send-for-review. And there was no automatic production deploy: a merged pull request
+save, and on send-for-review. There was no automatic production deploy: a merged pull request
 updated the content repository and left the live site alone, which ran for three merges with every
-unit active and every check green. Both are described where they now work — the preview
-address in the editor section above, and the deploy below.
+unit active and every check green. And **wp-admin's own "View" and "Preview" links pointed at the
+WASM instance** for the whole of the editor's earlier life — the address an editor is most likely
+to click to check their work was the one that could not show it, while the shell's status line
+beside it carried the correct staging address all along. Nothing caught it, because no test had
+ever asked what `get_permalink()` returned. All three are described where they now work — the
+preview address and the link rewriting in the editor section above, and the deploy below.
 
 ## Deploying on merge: a request an unprivileged process can write
 

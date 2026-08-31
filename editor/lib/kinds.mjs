@@ -16,6 +16,7 @@ import yaml from 'yaml';
 import { Author, Page, Post } from '../../src/contract/entities.ts';
 import { write } from '../../src/lib/canonical.ts';
 import { mdastToBlocks } from '../../src/lib/mdast-to-blocks.ts';
+import { pathForPage, pathForPost, pathForAuthor } from '../../src/lib/links.ts';
 import { VOCAB, editorialError } from './vocabulary.mjs';
 
 /** The slug `src/pages/[locale]/index.astro` selects the site's front page by, and that
@@ -91,6 +92,13 @@ function parseYaml(path, text, where) {
  *   parse       raw bytes -> { document, body }: what to validate, and what follows it
  *   toBlocks    a parsed entity -> the contract `Block[]` the editor canvas is built from
  *   serialise   the envelope plus its blocks -> the exact bytes of the file on disk
+ *   sitePath    (locale, slug) -> the path this kind's entities are served at on the SITE
+ *
+ * `sitePath` is src/lib/links.ts's own helper, referenced rather than reimplemented: that
+ * module holds the routing table exactly once, and the `slug === 'home'` special case lives
+ * inside `pathForPage` where it belongs. It is a row here rather than a lookup at the call
+ * site for the reason at the top of this file — a fourth kind must not mean a fourth branch
+ * in site-links.mjs.
  *
  * `serialise` receives one bag for every kind — `{ frontmatter, blocks, previousSlug,
  * toMarkdown }` — and each kind takes what it needs. `toMarkdown` is injected rather than
@@ -103,6 +111,7 @@ export const KINDS = {
     ext: '.md',
     schema: Post,
     wpPostType: 'post',
+    sitePath: pathForPost,
     parse: splitFrontmatterFence,
     // A post's body is markdown following the fence, not a schema field, so its blocks are
     // whatever that markdown maps to.
@@ -116,6 +125,7 @@ export const KINDS = {
     ext: '.yaml',
     schema: Page,
     wpPostType: 'page',
+    sitePath: pathForPage,
     parse: parseYamlDocument,
     // `Page.blocks` IS the contract block list — there is no markdown step to undo.
     toBlocks: (entity) => entity.blocks,
@@ -147,6 +157,7 @@ export const KINDS = {
     ext: '.yaml',
     schema: Author,
     wpPostType: 'jamground_author',
+    sitePath: pathForAuthor,
     parse: parseYamlDocument,
     // AN AUTHOR IS NOT A DOCUMENT. `Author` has no `blocks` field — there is no list of
     // blocks on disk to build a canvas from, and `blocksToMarkup(api, [])` is `''`, so the

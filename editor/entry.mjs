@@ -4,6 +4,7 @@ import { createBlock, serialize, parse, getBlockType } from '@wordpress/blocks';
 import { registerCoreBlocks } from '@wordpress/block-library';
 import { importPosts } from './lib/import.mjs';
 import { readPosts } from './lib/read-posts.mjs';
+import { writeSiteLinks } from './lib/site-links.mjs';
 import { getChangedFiles } from './lib/changed-files.mjs';
 import { startChange, save as commitChanges } from './lib/change.mjs';
 import { createPublish } from './lib/publish.mjs';
@@ -122,6 +123,28 @@ async function removeDefaultContent(client) {
     echo json_encode(['posts' => count($ids), 'comments' => count($cids)]);`;
   const result = await client.run({ code });
   return JSON.parse(result.text);
+}
+
+// The addresses wp-admin's own "View" and "Preview" links point at, refreshed whenever the
+// answer changes. There are exactly four such moments and all four are below: boot, a change
+// opening, a save, and publishing.
+//
+// WHY IT IS RE-READ EACH TIME rather than kept in a variable: the map is keyed on WordPress's
+// own post ids and built from the slugs on disk, so the only source that can produce it is the
+// same one save uses. Reusing readPosts also means a slug that has just been written is
+// reflected without a second notion of what the current slug is.
+//
+// A FAILURE HERE IS NEVER FATAL. Without the file the mu-plugin finds no address and removes
+// the link, which is the same outcome it produces for an entity that has none — a degraded
+// affordance, not a broken editor. So this logs and returns, in the style of
+// removeDefaultContent above, and no caller waits on its result.
+async function refreshSiteLinks({ client, origin, includeDrafts }) {
+  try {
+    const posts = await readPosts({ client });
+    await writeSiteLinks({ client, posts, origin, includeDrafts });
+  } catch (error) {
+    console.error('[entry.mjs] Refreshing site links failed:', error);
+  }
 }
 
 // --- Begin the OAuth flow ---
@@ -245,6 +268,10 @@ async function boot() {
       window.jamgroundImportError = importError.message;
       showStatus(VOCAB.contentUnreadable);
     }
+
+    // No change is open yet, so the only real site is the published one — and a draft is on
+    // it nowhere, which is why drafts are left out of the map here and put back in below.
+    await refreshSiteLinks({ client, origin: SITE_URL, includeDrafts: false });
 
     console.log('[entry.mjs] Playground is ready');
     window.jamgroundReady = true;
@@ -411,6 +438,17 @@ window.jamgroundShell = (() => {
         // the editor conclude the feature is broken.
         showStatus(`${VOCAB.changeStarted} — ${VOCAB.stagingPreparing}`, PREVIEW_URL_FOR(pr.number));
         setStartAChangeEnabled(false);
+        // AFTER every visible state change, and that order is load-bearing. The controls are
+        // wired fire-and-forget, so anything awaited here opens a window in which the status
+        // line already reports the change is open while the control that starts one is still
+        // enabled. Refreshing between those two lines produced exactly that, and write-path's
+        // "disabled after a successful start" assertion caught it.
+        //
+        // wp-admin's own links now have somewhere true to go for every entity, drafts
+        // included: the staging build renders those, and the published site does not.
+        await refreshSiteLinks({
+          client: window.jamgroundClient, origin: PREVIEW_URL_FOR(pr.number), includeDrafts: true,
+        });
         return { success: true, branch, prNumber: pr.number };
       } catch (error) {
         console.error('[jamgroundShell] startAChange failed:', error);
@@ -470,6 +508,11 @@ window.jamgroundShell = (() => {
         // box turns into a preview — so the one moment an editor is most likely to go and look is
         // this one, and showStatus has just wiped the link the change opened with.
         showStatus(VOCAB.savedStagingUpdating, PREVIEW_URL_FOR(change.prNumber));
+        // A slug that just moved moved on disk too, so the addresses have to catch up. The
+        // origin is unchanged; this is the map, not the host.
+        await refreshSiteLinks({
+          client: window.jamgroundClient, origin: PREVIEW_URL_FOR(change.prNumber), includeDrafts: true,
+        });
         return { success: true, changed: changedPosts.length };
       } catch (error) {
         console.error('[jamgroundShell] save failed:', error);
@@ -538,6 +581,11 @@ window.jamgroundShell = (() => {
           showStatus(VOCAB.publishedLiveAt, SITE_URL);
           change = null;
           setStartAChangeEnabled(true);
+          // The staging host is torn down with the change that owned it, so the addresses go
+          // back to the published site — and drafts, which it does not render, go back out.
+          await refreshSiteLinks({
+            client: window.jamgroundClient, origin: SITE_URL, includeDrafts: false,
+          });
         }
         return result;
       } catch (error) {
