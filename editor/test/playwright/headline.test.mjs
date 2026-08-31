@@ -333,7 +333,8 @@ test('a title typed in wp-admin reaches the committed blob, with slug unmoved an
     const blobsBeforeThisSave = blobsPosted.length;
     await page.click('#jamground-control-save');
     status = await waitForStatusChange(page, beforeSave);
-    assert.equal(status, VOCAB.saved);
+    assert.ok(status.startsWith(VOCAB.savedStagingUpdating),
+      `save should report the saved-and-updating wording, got: ${status}`);
 
     const newBlobs = blobsPosted.slice(blobsBeforeThisSave);
     assert.equal(newBlobs.length, 1, 'the headline edit alone commits exactly one blob');

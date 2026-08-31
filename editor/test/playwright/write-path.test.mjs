@@ -497,7 +497,16 @@ test('the write path: start a change, save, send for review, publish — through
     const beforeSave = status;
     await page.click('#jamground-control-save');
     status = await waitForStatusChange(page, beforeSave);
-    assert.equal(status, VOCAB.saved);
+    // Not equality any more, and the difference is the regression this asserts against. The
+    // status line replaces its whole contents on every call, so the staging address offered when
+    // the change opened is gone the moment anything else is said — and saving is exactly when an
+    // editor goes looking for it, because saving is what causes the rebuild. A `save` that says
+    // only "saved" is how the preview feature came to read as broken while every preview behind
+    // it was building correctly.
+    assert.ok(status.startsWith(VOCAB.savedStagingUpdating),
+      `save should report the saved-and-updating wording, got: ${status}`);
+    assert.match(status, /https:\/\/pr-\d+\.preview\./,
+      'the staging address must still be on screen after a save, not only when the change opened');
 
     const lastAction = await page.evaluate(() => window.jamgroundLastAction);
     assert.equal(lastAction.type, 'save');
@@ -548,7 +557,10 @@ test('the write path: start a change, save, send for review, publish — through
     }
     assert.ok(createdCommits.length > secondSaveCreatedCommitsStart, 'second save should create a commit within timeout');
     status = await page.evaluate(() => document.getElementById('jamground-status').textContent);
-    assert.equal(status, VOCAB.saved);
+    assert.ok(status.startsWith(VOCAB.savedStagingUpdating),
+      `the second save should report the same wording, got: ${status}`);
+    assert.match(status, /https:\/\/pr-\d+\.preview\./,
+      'and must still carry the address — a second save is where a one-shot link would be lost');
 
     const secondSaveCommitCalls = apiCalls.slice(afterFirstSaveLen).filter((c) => c.method === 'POST' && c.path === '/git/commits');
     assert.equal(secondSaveCommitCalls.length, 1, 'the second save should create exactly one commit');
@@ -567,7 +579,17 @@ test('the write path: start a change, save, send for review, publish — through
     const beforeReview = status;
     await page.click('#jamground-control-sendForReview');
     status = await waitForStatusChange(page, beforeReview);
-    assert.equal(status, VOCAB.sentForReview);
+    // Sending for review moves no content and triggers no rebuild — the queue consumer ignores
+    // `ready_for_review` on purpose — so the wording must not promise an update. What it must
+    // still do is keep the address on screen: the staging site is showing the last save, and an
+    // editor told "sent for review" with no address is one who goes looking for a rebuild that
+    // was never going to happen.
+    assert.ok(status.startsWith(VOCAB.sentForReviewStagingAt),
+      `send-for-review should report the still-showing wording, got: ${status}`);
+    assert.match(status, /https:\/\/pr-\d+\.preview\./,
+      'the staging address must survive send-for-review too');
+    assert.ok(!/updating/.test(status),
+      'sending for review rebuilds nothing, so it must not promise an update');
 
     const reviewCalls = apiCalls.slice(afterSecondSaveLen);
     const graphqlCalls = reviewCalls.filter((c) => c.path === '/graphql');

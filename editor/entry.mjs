@@ -465,7 +465,11 @@ window.jamgroundShell = (() => {
           api: blockApi,
           getUpdatedAt,
         });
-        showStatus(VOCAB.saved);
+        // The address again, not just the word. This is the action that causes the rebuild — the
+        // ref update below is what GitHub reports as `synchronize`, and that is the delivery the
+        // box turns into a preview — so the one moment an editor is most likely to go and look is
+        // this one, and showStatus has just wiped the link the change opened with.
+        showStatus(VOCAB.savedStagingUpdating, PREVIEW_URL_FOR(change.prNumber));
         return { success: true, changed: changedPosts.length };
       } catch (error) {
         console.error('[jamgroundShell] save failed:', error);
@@ -495,7 +499,12 @@ window.jamgroundShell = (() => {
           // publish.mjs — supplies the editor-facing words.
           showStatus(VOCAB.noContentChange);
         } else {
-          showStatus(VOCAB.sentForReview);
+          // Sending for review moves no content, so nothing rebuilds — the consumer ignores
+          // `ready_for_review` deliberately. The address is repeated rather than the update
+          // promised again: the staging site is still showing the last save, and an editor who
+          // has just been told "sent for review" with no address is the one who goes looking for
+          // a rebuild that was never going to happen.
+          showStatus(VOCAB.sentForReviewStagingAt, PREVIEW_URL_FOR(change.prNumber));
         }
         return result || { success: true };
       } catch (error) {

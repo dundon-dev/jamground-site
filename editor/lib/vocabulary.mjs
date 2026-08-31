@@ -46,17 +46,40 @@ export const VOCAB = {
   changeAlreadyOpen: 'a change is already open — finish it first',
   notInChange: 'start a change before doing this',
   noContentChange: 'make and save a change first',
-  saved: 'saved',
+  // `saved: 'saved'` used to be here, and `sentForReview` below it. Both were replaced rather than
+  // joined: each said its word and nothing else, and showStatus replaces the status line outright,
+  // so each was a place the staging address was silently thrown away. Two entries saying the same
+  // thing, one with the address and one without, is an invitation to call the wrong one.
+  //
+  // Said WITH the staging address attached, because the moment after a save is the moment an
+  // editor most wants it and the moment it is least likely to still be on screen: showStatus
+  // replaces the status line outright, so the address handed over when the change opened is gone
+  // by now. Saving is also the action that actually causes the rebuild — GitHub sends
+  // `synchronize` when the branch moves, and that is the delivery the box turns into a preview —
+  // so promising an update here is a statement about what just happened, not a hope.
+  savedStagingUpdating: 'saved — your staging site is updating and will show this in about a minute at:',
   nothingToSave: 'there is nothing new to save',
   saveFailed: 'save did not complete — please try again',
-  sentForReview: 'the change has been sent for review',
+  // The same address again, and deliberately NOT a second promise of an update. Sending for
+  // review moves no content, so nothing rebuilds — the box ignores that delivery on purpose. The
+  // staging site is still showing the last save, and saying so is what stops an editor waiting
+  // for a change that is already there.
+  sentForReviewStagingAt: 'the change has been sent for review — it is still showing at:',
   sendForReviewFailed: 'sending for review did not complete — please try again',
   published: 'published',
   // Said with the live site's address attached. Publishing closes the change, and a closed change
   // has no staging site — the link offered when it opened is torn down within the minute. Ending
   // on the address that IS now correct closes the loop; leaving the old one on screen would hand
   // the editor a link that worked a moment ago and does not now, which reads as a fault.
-  publishedLiveAt: 'published — your change is on the live site at:',
+  //
+  // IT SAYS "IS BEING UPDATED", NOT "IS ON". The wording used to assert the change was already
+  // live, and for the whole of that wording's life it was false: nothing rebuilt production, so
+  // the live site kept serving the previous release and the editor had been told otherwise. A
+  // merge now does trigger a deploy, but a deploy is a build — minutes, not the instant this
+  // message appears — so the honest sentence is the one that names the delay. An editor who
+  // follows the link immediately and sees the old text must be able to read that as "not yet"
+  // rather than as "it did not work".
+  publishedLiveAt: 'published — the live site is being updated and will show this in a few minutes at:',
   publishFailed: 'publishing did not complete — please try again',
 
   // Two refusals that belong to pages, and that reach the editor through the save path.
