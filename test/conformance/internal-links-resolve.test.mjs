@@ -58,15 +58,23 @@ test('every internal href in dist/ resolves to a route the build generated', () 
 
 /* Against a false green. A regex that silently stops matching would make the assertion above
  * pass over nothing at all — the failure mode that makes a gate worse than no gate. These are
- * two anchors the seed content must produce: the primary-navigation item proves a `ref:` in
- * navigation/en-US/primary.yaml resolved to a real page, and the blog index link proves it
- * lists the one seed post. */
+ * three anchors the seed content must produce, one per way a link can be authored: the
+ * primary-navigation item proves a `ref:` in navigation/en-US/primary.yaml resolved to a real
+ * page, the blog-index item proves a `route:` did — the target no `ref:` can name, because the
+ * blog index is generated and has no entity — and the post link proves the index lists the one
+ * seed post.
+ *
+ * The `route:` anchor is worth its own line rather than being folded into the first. Together
+ * with the assertion above — every internal href must be a route deriveExpectedRoutes() derived
+ * from content/ — it is the end-to-end proof of the whole named-route path: the schema accepted
+ * it, links.ts resolved it, SiteHeader rendered it, and it landed on a route that exists. */
 test('the extractor actually found the seed content\'s internal links', () => {
   const all = emitted.flatMap(({ hrefs }) => hrefs);
   assert.ok(all.length > 0, 'no anchors found in dist/ at all — the extractor is broken');
 
   const internal = all.filter((href) => classifyHref(href).kind === 'internal');
   assert.ok(internal.includes('/en-us/example/'), 'primary navigation must link to the example page');
+  assert.ok(internal.includes('/en-us/blog/'), 'primary navigation must link to the blog index');
   assert.ok(internal.includes('/en-us/blog/example-post/'), 'the blog index must link to the example post');
 });
 

@@ -17,6 +17,7 @@ import {
   resolveLink,
   resolveBlockLinks,
   navHref,
+  hrefForRoute,
   pathForHome,
   pathForPage,
   pathForBlogIndex,
@@ -29,6 +30,11 @@ import {
 const GROUP_HOME = '01J8Z9GRP0000000000000HOME';
 const GROUP_PRICING = '01J8Z9GRP00000000000PRICING';
 const GROUP_POST = '01J8Z9GRP0000000000000POST';
+// Two more POSTS, in groups of their own. Reusing GROUP_POST for either would change what
+// 'a group with no member in the referring locale' reports as `members:` and break it from a
+// distance — the group is the key, so a second member is never a free addition.
+const GROUP_POST_DE = '01J8Z9GRP00000000000POSTDE';
+const GROUP_POST_FR = '01J8Z9GRP00000000000POSTFR';
 const GROUP_AUTHOR = '01J8Z9GRP000000000000AUTH0';
 const GROUP_DRAFT = '01J8Z9GRP00000000000DRAFT0';
 const GROUP_ABSENT = '01J8Z9GRP000000000000NONE0';
@@ -63,6 +69,22 @@ function fixture() {
     ],
     posts: [
       entity({ translationOf: GROUP_POST, slug: 'launch', id: '01J8Z9POST000000000000LNCH' }),
+      // A published post in a second locale, so the blog index exists there too.
+      entity({
+        translationOf: GROUP_POST_DE,
+        slug: 'start',
+        locale: 'de-DE',
+        id: '01J8Z9POST000000000000DEDE',
+      }),
+      // A locale whose ONLY post is a draft: its blog index exists in a preview build and does
+      // not exist in production, which is the whole of the route-target drafts policy.
+      entity({
+        translationOf: GROUP_POST_FR,
+        slug: 'brouillon',
+        locale: 'fr-FR',
+        status: 'draft',
+        id: '01J8Z9POST000000000000FRFR',
+      }),
     ],
     authors: [
       entity({ translationOf: GROUP_AUTHOR, slug: 'example-author', id: '01J8Z9AUTH00000000000SDUN' }),
@@ -211,19 +233,106 @@ test('two members of one group in one locale throw, naming both', () => {
 
 // ---- Navigation -------------------------------------------------------------------------
 
-test('navHref passes an external href through and resolves an internal ref', () => {
-  const c = linkContext(fixture(), from({ collection: 'navigation', slug: 'primary' }), false);
+const nav = (over = {}, includeDrafts = false) =>
+  linkContext(fixture(), from({ collection: 'navigation', slug: 'primary', ...over }), includeDrafts);
+
+test('navHref passes an external href through and resolves an internal ref or route', () => {
+  const c = nav();
   assert.equal(navHref(c, { label: 'Docs', href: 'https://example.org/docs' }), 'https://example.org/docs');
   assert.equal(navHref(c, { label: 'Pricing', ref: GROUP_PRICING }), '/en-us/pricing/');
+  assert.equal(navHref(c, { label: 'Blog', route: 'blog' }), '/en-us/blog/');
 });
 
-test('navHref rejects an item carrying both targets or neither', () => {
-  const c = linkContext(fixture(), from({ collection: 'navigation', slug: 'primary' }), false);
-  assert.throws(() => navHref(c, { label: 'x' }), /exactly one of ref or href \(got neither\)/);
+test('navHref rejects an item carrying two targets or none, naming the ones it found', () => {
+  const c = nav();
+  assert.throws(() => navHref(c, { label: 'x' }), /exactly one of ref, route or href \(got none\)/);
   assert.throws(
     () => navHref(c, { label: 'x', ref: GROUP_PRICING, href: 'https://example.org/' }),
-    /exactly one of ref or href \(got both\)/,
+    /exactly one of ref, route or href \(got ref and href\)/,
   );
+  assert.throws(
+    () => navHref(c, { label: 'x', ref: GROUP_PRICING, route: 'blog' }),
+    /exactly one of ref, route or href \(got ref and route\)/,
+  );
+  assert.throws(
+    () => navHref(c, { label: 'x', route: 'blog', href: 'https://example.org/' }),
+    /exactly one of ref, route or href \(got route and href\)/,
+  );
+  assert.throws(
+    () => navHref(c, { label: 'x', ref: GROUP_PRICING, route: 'blog', href: 'https://example.org/' }),
+    /exactly one of ref, route or href \(got ref and route and href\)/,
+  );
+});
+
+// ---- Named internal routes --------------------------------------------------------------
+// The blog index has no entity and therefore no translation group, so `ref` cannot reach it and
+// ExternalUrl will not carry an internal path. These are the cases where the route the content
+// names is not the route the build generates.
+
+test('route: blog resolves through pathForBlogIndex, in the referring locale', () => {
+  assert.equal(hrefForRoute(nav(), 'blog'), '/en-us/blog/');
+  assert.equal(hrefForRoute(nav({ locale: 'de-DE', slug: 'haupt' }), 'blog'), '/de-de/blog/');
+  // Not merely equal to the literal: equal to what the routing table itself produces, so the two
+  // cannot drift.
+  assert.equal(hrefForRoute(nav(), 'blog'), pathForBlogIndex('en-US'));
+});
+
+test('a locale with no post has no blog index, so targeting it fails the build', () => {
+  assert.throws(
+    () => hrefForRoute(nav({ locale: 'it-IT', slug: 'principale' }), 'blog'),
+    (err) => {
+      assert.ok(err instanceof LinkResolutionError);
+      assert.match(err.message, /INV-11/);
+      assert.match(err.message, /no post this build renders/);
+      assert.match(err.message, /\(0 published, 0 draft\)/);
+      assert.match(err.message, /it-IT/);
+      assert.match(err.message, /\/it-it\/blog\//);
+      return true;
+    },
+  );
+});
+
+test('a draft-only locale has no blog index when the build excludes drafts', () => {
+  assert.throws(
+    () => hrefForRoute(nav({ locale: 'fr-FR', slug: 'principale' }, false), 'blog'),
+    (err) => {
+      assert.match(err.message, /no post this build renders/);
+      assert.match(err.message, /\(0 published, 1 draft\)/);
+      return true;
+    },
+  );
+});
+
+test('OD-28: a published entity may not target a blog index only drafts create', () => {
+  assert.throws(
+    () => hrefForRoute(nav({ locale: 'fr-FR', slug: 'principale', status: 'published' }, true), 'blog'),
+    (err) => {
+      assert.match(err.message, /OD-28/);
+      assert.match(err.message, /may not depend on a draft/);
+      return true;
+    },
+  );
+});
+
+test('OD-28 allows a draft entity to target a draft-only blog index in a preview build', () => {
+  assert.equal(
+    hrefForRoute(nav({ locale: 'fr-FR', slug: 'principale', status: 'draft' }, true), 'blog'),
+    '/fr-fr/blog/',
+  );
+});
+
+test('an unknown route name throws rather than emitting href="undefined"', () => {
+  assert.throws(
+    () => hrefForRoute(nav(), 'tags'),
+    (err) => {
+      assert.ok(err instanceof LinkResolutionError);
+      assert.match(err.message, /unknown internal route 'tags'/);
+      assert.match(err.message, /known routes: blog/);
+      return true;
+    },
+  );
+  // A name that would reach a prototype method under a bare property lookup.
+  assert.throws(() => hrefForRoute(nav(), 'constructor'), /unknown internal route 'constructor'/);
 });
 
 // ---- Block rewriting --------------------------------------------------------------------

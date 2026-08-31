@@ -28,7 +28,12 @@ const nav = forLocale.find((n) => n.data.slug === 'primary') ?? forLocale[0];
 /* An unresolvable ref is a BUILD FAILURE, not a link quietly rendered inert: a ref that does
  * not resolve fails the build, and a published entity linking to a draft is an error in
  * preview and production alike. Softening it here would reintroduce exactly the class of
- * defect this guards against — a link on screen that goes nowhere. */
+ * defect this guards against — a link on screen that goes nowhere.
+ *
+ * The same holds for a `route:` item, on the same terms: `route: blog` in a locale whose blog
+ * index this build does not generate — because the locale has no post it renders — throws rather
+ * than pointing at a 404. Which routes exist is links.ts's business, not this file's; nothing
+ * here builds a path or knows a route name. */
 const ctx = nav
   ? linkContext(await loadLinkIndex(), {
       collection: 'navigation',
@@ -39,7 +44,7 @@ const ctx = nav
     }, resolveDraftFlag())
   : null;
 
-type Item = { label: string; ref?: string; href?: string; children?: Item[] };
+type Item = { label: string; ref?: string; route?: string; href?: string; children?: Item[] };
 const items: Item[] = (nav?.data.items ?? []) as Item[];
 
 const current = Astro.url.pathname;

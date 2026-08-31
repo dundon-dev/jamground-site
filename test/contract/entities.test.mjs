@@ -84,11 +84,50 @@ test('Author.bio is InlineText, and Author.avatar is a MediaRef', () => {
 
 // ---- Navigation -----------------------------------------------------------------------------
 
-test('a navigation item must carry exactly one of ref or href (11 §3)', () => {
+test('a navigation item must carry exactly one of ref, route or href (11 §3)', () => {
   assert.equal(NavigationItem.safeParse({ label: 'Home', ref: ULID_A }).success, true);
+  assert.equal(NavigationItem.safeParse({ label: 'Blog', route: 'blog' }).success, true);
   assert.equal(NavigationItem.safeParse({ label: 'Docs', href: 'https://example.org/' }).success, true);
-  assert.equal(NavigationItem.safeParse({ label: 'Both', ref: ULID_A, href: 'https://example.org/' }).success, false);
+
+  // Every pair, and all three: exactly-one is not "at least one", and a chained !== would have
+  // read two of these as satisfied.
+  assert.equal(NavigationItem.safeParse({ label: 'x', ref: ULID_A, href: 'https://example.org/' }).success, false);
+  assert.equal(NavigationItem.safeParse({ label: 'x', ref: ULID_A, route: 'blog' }).success, false);
+  assert.equal(NavigationItem.safeParse({ label: 'x', route: 'blog', href: 'https://example.org/' }).success, false);
+  assert.equal(NavigationItem.safeParse({ label: 'x', ref: ULID_A, route: 'blog', href: 'https://example.org/' }).success, false);
   assert.equal(NavigationItem.safeParse({ label: 'Neither' }).success, false);
+});
+
+test('route is a closed set — an unknown route is a schema failure, not a 404 (defs.ts)', () => {
+  for (const route of ['blag', 'Blog', 'blog/', '/en-us/blog/', '', 'posts', 'authors', 'tags']) {
+    assert.equal(
+      NavigationItem.safeParse({ label: 'x', route }).success,
+      false,
+      `route: ${JSON.stringify(route)} parsed, but INTERNAL_ROUTES is closed — an unknown route `
+      + 'has no resolver in src/lib/links.ts and would reach a browser as a broken link',
+    );
+  }
+});
+
+test('a navigation item and its children stay strict — an unknown key is a defect', () => {
+  assert.equal(NavigationItem.safeParse({ label: 'x', route: 'blog', target: '_blank' }).success, false);
+  assert.equal(
+    NavigationItem.safeParse({
+      label: 'Products', ref: ULID_A, children: [{ label: 'Blog', route: 'blog', target: '_blank' }],
+    }).success,
+    false,
+  );
+});
+
+test('a child may carry any of the three targets, same as a top-level item', () => {
+  const withRoute = { label: 'Products', ref: ULID_A, children: [{ label: 'Blog', route: 'blog' }] };
+  const parsed = NavigationItem.safeParse(withRoute);
+  assert.equal(parsed.success, true, parsed.success ? '' : JSON.stringify(parsed.error.issues));
+  assert.equal(
+    NavigationItem.safeParse({ ...withRoute, children: [{ label: 'x', ref: ULID_B, route: 'blog' }] }).success,
+    false,
+    'the exactly-one rule is the same rule at both levels — navTarget is shared',
+  );
 });
 
 test('navigation nests exactly two levels — a grandchild has no field to occupy (11 §3)', () => {

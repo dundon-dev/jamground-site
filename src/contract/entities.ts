@@ -3,7 +3,7 @@
  * (blocks.ts) rather than deriving its body shape here. Imported by relative
  * .ts path, exactly as envelope.ts imports defs.ts — nothing here is re-derived. */
 import { z } from 'zod';
-import { Ulid, Locale, Slug, InlineText, MediaRef, ExternalUrl } from './defs.ts';
+import { Ulid, Locale, Slug, InlineText, MediaRef, ExternalUrl, InternalRoute } from './defs.ts';
 import { Envelope } from './envelope.ts';
 import { Block } from './blocks.ts';
 
@@ -30,16 +30,25 @@ export const Author = Envelope.extend({
 const navTarget = {
   label: z.string().min(1),
   ref:   Ulid.optional(),          // internal: a translation group
+  route: InternalRoute.optional(), // internal: a named route no entity declares (defs.ts)
   href:  ExternalUrl.optional(),   // external only; internal absolute URLs are not allowed here
 };
-const oneTarget = (v: { ref?: string; href?: string }) => !!v.ref !== !!v.href;
+/** Exactly one of THREE, counted rather than chained. `!!a !== !!b` is exact for two and stops
+ *  being exact at three, so the shape of the check changes with the arity rather than being
+ *  extended by another operator.
+ *
+ *  It counts `undefined`, not truthiness. Every leaf schema above already rejects the empty
+ *  string, so `ref: ''` is a field error naming `ref` — under a truthiness count it would instead
+ *  read as "ref absent" and fail here as "no target", which names the wrong field. */
+const oneTarget = (v: { ref?: string; route?: string; href?: string }) =>
+  [v.ref, v.route, v.href].filter(t => t !== undefined).length === 1;
 
-const NavChild = z.object(navTarget).strict().refine(oneTarget, 'exactly one of ref or href');
+const NavChild = z.object(navTarget).strict().refine(oneTarget, 'exactly one of ref, route or href');
 
 export const NavigationItem = z.object({
   ...navTarget,
   children: z.array(NavChild).min(1).max(12).optional(),
-}).strict().refine(oneTarget, 'exactly one of ref or href');
+}).strict().refine(oneTarget, 'exactly one of ref, route or href');
 
 export const Navigation = Envelope.extend({ items: z.array(NavigationItem).min(1).max(12) });
 

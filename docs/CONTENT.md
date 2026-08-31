@@ -13,9 +13,15 @@ Four are per-locale files under `content/<kind>/<locale>/<file>`, each carrying 
   optional `excerpt`, `tags`, `related`, and a Markdown body after the frontmatter fence.
 - **author** — the envelope plus `name` (required), optional `role`, `bio`, `avatar`.
 - **navigation** — the envelope plus `items` (1–12 `NavigationItem`s). Each item carries a
-  `label` and *exactly one* of `ref` (internal) or `href` (external); an item may nest one
-  further level of children (also exactly-one-of), capped there by having no third field to
-  nest into, not by a number.
+  `label` and *exactly one* of three targets; an item may nest one further level of children
+  (same exactly-one-of rule), capped there by having no third field to nest into, not by a
+  number. The three:
+  - `ref` — a translation group, resolved to whichever member is in the referring locale.
+  - `route` — a **named internal route**, from the closed set `INTERNAL_ROUTES` in `defs.ts`
+    (today just `blog`). Some routes the build generates have no entity behind them and so no
+    translation group for a `ref:` to name — the blog index is the first. `route` names the
+    route, never a path: the path is `src/lib/links.ts`'s to build.
+  - `href` — external only (`https:`, `mailto:`, `tel:`). An internal absolute URL is rejected.
 
 **settings** is different: locale-neutral, one file (`content/settings/site.yaml`), no envelope
 — `defaultLocale`, `locales`, `siteName`, `baseUrl`, optional `social`. A sibling,
@@ -97,13 +103,18 @@ guards in `src/components/blocks/Hero.astro` and `Cta.astro` — because
 `test/contract/links.test.mjs` asserts on that exact text. They are defined here because nothing
 else in this repository defines them any more.
 
-**INV-11 — an unresolvable `ref:` is a build failure, never a fallback href.** Every path through
+**INV-11 — an unresolvable target is a build failure, never a fallback href.** Every path through
 `hrefFor()` in `src/lib/links.ts` that cannot produce a real href throws a `LinkResolutionError`
 tagged `INV-11` instead of returning one: a `ref:` naming a translation group no entity declares,
 one with no member in the referring entity's own locale, or a resolved link that reached a
 renderer without going through resolution at all (the guards in `Hero.astro`/`Cta.astro`). There
 is no code path that emits a bare group id, an empty string, or a link to the wrong locale as a
 fallback — the failure is loud and at build time, every time.
+
+`hrefForRoute()` holds a `route:` to the same standard, with one failure of its own: a route the
+build does not generate **for that locale**. `src/pages/[locale]/blog/index.astro` emits no blog
+index for a locale with no post this build renders, so `route: blog` there would be a link to a
+404 on a page that built clean. It throws instead, naming the locale and the counts.
 
 **INV-12 — a translation group may not have two members in one locale.** Enforced while building
 the link index (`buildLinkIndex()`): the moment a second entity claims a `(translationOf,
@@ -113,7 +124,11 @@ a decision this contract leaves to chance.
 
 **OD-28 — a published entity may not link to a draft, in preview or in production; draft →
 draft is allowed.** This is the specific drafts policy that `hrefFor()` enforces on top of
-INV-11's general rule: when a build excludes drafts entirely, a link to a draft target has no
+INV-11's general rule, and that `hrefForRoute()` applies one level up: there the *target* may be
+a draft, there the *route* exists only because a draft is being rendered — a published entity
+targeting a blog index that only draft posts create throws for the same reason.
+
+For an ordinary `ref:`: when a build excludes drafts entirely, a link to a draft target has no
 route to resolve to, full stop. When a build includes drafts (preview), a target that is a draft
 now *does* have a route — but a **published** referrer linking to it still throws, so that a link
 broken in production can never look fine in preview. A **draft** referrer linking to a draft

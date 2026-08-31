@@ -137,6 +137,23 @@ export const ICONS = [
 ] as const;
 export const Icon = z.enum(ICONS);
 
+/** Routes that exist without any entity declaring them — entries in the routing table itself
+ *  (src/lib/links.ts), addressable from navigation. A `ref:` cannot express one: a ref targets a
+ *  translation GROUP, and there is no group to target because there is no entity. An `href:`
+ *  cannot either — ExternalUrl rejects an internal path on purpose.
+ *
+ *  Closed, for the same reason ICONS above is closed: an unknown value is a SCHEMA failure with
+ *  a field name, not a render-time surprise that reaches a browser. src/lib/links.ts keys one
+ *  resolver off `InternalRouteName`, so adding a member here without teaching that table to
+ *  resolve it is a type error — a deliberate two-part change rather than a silent one.
+ *
+ *  NOT a Slug. `blog` here is the NAME of a route, not a URL segment: the segment is
+ *  pathForBlogIndex()'s business and only it may build one, the same way localeToSegment is the
+ *  only lowercasing anywhere. A value that looked like a path would invite content to carry one. */
+export const INTERNAL_ROUTES = ['blog'] as const;
+export const InternalRoute = z.enum(INTERNAL_ROUTES);
+export type InternalRouteName = (typeof INTERNAL_ROUTES)[number];
+
 /** An outbound URL. `http:` is rejected outright — a marketing site linking over plaintext
  *  is a defect, and excluding it removes a case the validator would otherwise have to check
  *  for. Whether a URL is internal-absolute (and so not allowed here) is decided by the
