@@ -5,3 +5,9 @@
 # rather than the two copies drifting apart.
 jamground_release_switch: /usr/local/sbin/jamground-release-switch
 jamground_reload_nginx: /usr/local/sbin/jamground-reload-nginx
+# The third, added when a merged pull request became able to start a deploy on its own. It exists
+# because the automatic path has to do exactly what infra/RUNBOOK.md tells an operator to do by
+# hand — `sudo env JAMGROUND_*_CHECKOUT=... /usr/local/bin/jamground-deploy` — and that is an
+# ARGUMENT-TAKING privileged command. Written down as a wrapper, the grant carries no path and no
+# option a caller can choose, exactly like the two above.
+jamground_deploy_now: /usr/local/sbin/jamground-deploy-now

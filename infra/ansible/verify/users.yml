@@ -1,8 +1,14 @@
 ---
 # Two things to prove: jamground-build is entitled to nothing, and jamground is entitled to
-# exactly the two no-argument wrappers roles/users granted it — no more, no less. `sudo -l -U`
+# exactly the three no-argument wrappers roles/users granted it — no more, no less. `sudo -l -U`
 # is a read query, but it is still the `command:` module (check mode skips it), so it says what
 # it does in check mode explicitly rather than by the accident of never being run with --check.
+#
+# IT WAS TWO UNTIL A MERGED PULL REQUEST COULD DEPLOY ON ITS OWN. The third,
+# jamground-deploy-now, is the only privilege that pass added, and the count is asserted rather
+# than the names alone precisely so a fourth cannot arrive unnoticed. What did NOT change is the
+# first assertion: the account that decides a deploy should happen — jamground-build, running the
+# webhook queue consumer — is still entitled to nothing at all. It writes a request file.
 - name: Verify the two accounts and their sudo entitlements
   hosts: jamground
   gather_facts: false
@@ -29,12 +35,13 @@
       changed_when: false
       failed_when: false
 
-    - name: Assert jamground holds exactly the two no-argument wrappers
+    - name: Assert jamground holds exactly the three no-argument wrappers
       ansible.builtin.assert:
         that:
           - orchestrator_sudo.stdout is search('/usr/local/sbin/jamground-release-switch')
           - orchestrator_sudo.stdout is search('/usr/local/sbin/jamground-reload-nginx')
-          - orchestrator_sudo.stdout_lines | select('match', '^\\s*\\(root\\)\\s+NOPASSWD:') | list | length == 2
+          - orchestrator_sudo.stdout is search('/usr/local/sbin/jamground-deploy-now')
+          - orchestrator_sudo.stdout_lines | select('match', '^\\s*\\(root\\)\\s+NOPASSWD:') | list | length == 3
         fail_msg: >-
-          jamground's sudo entitlements are not exactly the two fixed wrappers:
+          jamground's sudo entitlements are not exactly the three fixed wrappers:
           {{ orchestrator_sudo.stdout }}

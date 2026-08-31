@@ -1,0 +1,32 @@
+# {{ ansible_managed }}
+#
+# Starts the production deploy the moment a merged pull request lands, rather than at the next
+# converge an operator happens to run. Before this existed, `publish` in the editor merged the
+# change and the live site did not move — measured on the box: production three merges behind
+# content main, with every unit active, every certificate valid and every check green.
+#
+# THE WRITER HOLDS NO PRIVILEGE. infra/hooks/lib/consumer.mjs runs as jamground-build with no sudo
+# at all; it writes a request file into {{ deploy_requests_dir }} and can do nothing else. This
+# unit and the service it starts are the privileged half, and they take nothing from that file but
+# its existence.
+#
+# PathExistsGlob rather than DirectoryNotEmpty, for exactly the reason
+# jamground-hooks-consume.path already gives: the request is written as `.<name>.tmp` and renamed
+# into place (infra/hooks/lib/queue.mjs), and DirectoryNotEmpty would fire on a request that does
+# not exist yet.
+#
+# No timer beside it, unlike the queue consumer. A path unit does not re-trigger while the service
+# it started is still running, and the service drains the whole directory in a bounded loop before
+# it exits — so a request landing mid-deploy is picked up by that loop rather than needing a
+# backstop tick to notice it. What is left uncovered is the request that lands in the instant
+# between the last claim and the exit, and jamground-selfcheck watches for exactly that: a request
+# older than ten minutes means this unit is not firing.
+[Unit]
+Description=jamground production deploy — start as soon as a merged pull request lands
+
+[Path]
+PathExistsGlob={{ deploy_requests_dir }}/*.json
+Unit={{ deploy_request_service_name }}.service
+
+[Install]
+WantedBy=paths.target

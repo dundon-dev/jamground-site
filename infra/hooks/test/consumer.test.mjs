@@ -13,12 +13,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readdirSync, existsSync, rmSync,
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  decide, runOnce, deployProductionOnMerge, previewTeardown,
+  decide, runOnce, previewTeardown,
 } from '../lib/consumer.mjs';
 import { withLock } from '../lib/queue.mjs';
 
@@ -33,6 +33,10 @@ function harness() {
     failedDir: join(root, 'failed'),
     locksDir: join(root, 'locks'),
     previewsRoot: join(root, 'previews'),
+    // NOT pre-created: `enqueue` makes it, and the real box's roles/deploy makes it too. Creating
+    // it here would hide a regression in which the seam stops creating it and only works where
+    // something else happened to.
+    deployRequestsDir: join(root, 'deploy-requests'),
   };
   mkdirSync(dirs.queueDir, { recursive: true });
   mkdirSync(dirs.previewsRoot, { recursive: true });
@@ -74,11 +78,15 @@ function spies() {
   };
 }
 
+/** Runs one pass with every side effect spied on. `extra` is spread LAST, so a caller writing
+ *  `{ onMerged: undefined }` un-spies that one hook and gets runOnce's real default — which is how
+ *  the tests below exercise the production seam itself rather than a stand-in for it. */
 const run = (dirs, spy, extra = {}) => runOnce({
   queueDir: dirs.queueDir,
   failedDir: dirs.failedDir,
   locksDir: dirs.locksDir,
   previewsRoot: dirs.previewsRoot,
+  deployRequestsDir: dirs.deployRequestsDir,
   build: spy.build,
   teardown: spy.teardown,
   onMerged: spy.onMerged,
@@ -138,7 +146,7 @@ test('a closed pull request tears its preview down and reaches no deploy seam', 
   }
 });
 
-test('a merged pull request tears down and reaches the seam — which deploys nothing', async () => {
+test('a merged pull request tears down and reaches the seam', async () => {
   const dirs = harness();
   const spy = spies();
   try {
@@ -147,14 +155,109 @@ test('a merged pull request tears down and reaches the seam — which deploys no
 
     assert.deepEqual(summary.tornDown, [42]);
     assert.deepEqual(spy.merged.map(({ number }) => number), [42]);
+    assert.deepEqual(summary.deployRequested, [42]);
+    assert.equal(spy.merged[0].job, '1700000000000-a.json',
+      'the request carries the delivery it came from, so a quarantined deploy can be traced back '
+      + 'to it without correlating two directories by timestamp');
   } finally {
     clean(dirs);
   }
+});
 
-  // And the seam that is actually wired in production is inert: it takes the decision, returns
-  // nothing, and triggers no deploy. This is the assertion that has to be changed deliberately
-  // the day auto-deploy lands.
-  assert.equal(deployProductionOnMerge({ number: 42, merged: true }), undefined);
+/* The seam itself, exercised directly rather than through the spy.
+ *
+ * THIS TEST USED TO ASSERT THE OPPOSITE — `assert.equal(deployProductionOnMerge(…), undefined)`,
+ * with a comment saying it was the assertion that would have to change deliberately the day
+ * auto-deploy landed. This is that day, and this is that change.
+ *
+ * What replaces it is the property that makes the request a SIGNAL rather than a command: it is
+ * one complete file, written atomically, and the privileged side that reads it takes nothing from
+ * its contents.
+ */
+test('a merged pull request writes exactly one complete deploy request', async () => {
+  const dirs = harness();
+  const spy = spies();
+  try {
+    pullRequest(dirs, '1700000000000-a.json', { action: 'closed', number: 42, merged: true });
+    await run(dirs, spy, { onMerged: undefined });
+
+    const written = readdirSync(dirs.deployRequestsDir);
+    assert.equal(written.length, 1, `wrote ${JSON.stringify(written)}, expected exactly one request`);
+    assert.match(written[0], /^\d+-[0-9a-f-]+\.json$/,
+      'the name must be enqueue\'s: the millisecond prefix is what makes a plain sort chronological');
+    assert.ok(!written[0].startsWith('.'),
+      'a dot-prefixed name is enqueue\'s half-written temp file — the .path unit\'s *.json glob '
+      + 'exists so it cannot fire on one, and a leftover means the rename did not happen');
+
+    const request = JSON.parse(readFileSync(join(dirs.deployRequestsDir, written[0]), 'utf8'));
+    assert.equal(request.number, 42);
+    assert.equal(request.job, '1700000000000-a.json');
+    assert.equal(request.reason, 'pull request merged');
+    assert.ok(Date.parse(request.requestedAt) > 0, 'requestedAt must be a real instant');
+  } finally {
+    clean(dirs);
+  }
+});
+
+test('a pull request closed without merging writes no deploy request', async () => {
+  const dirs = harness();
+  const spy = spies();
+  try {
+    pullRequest(dirs, '1700000000000-a.json', { action: 'closed', number: 42, merged: false });
+    const summary = await run(dirs, spy, { onMerged: undefined });
+
+    assert.deepEqual(summary.tornDown, [42]);
+    assert.deepEqual(summary.deployRequested, []);
+    assert.equal(existsSync(dirs.deployRequestsDir), false,
+      'closing a change without merging it is not production\'s business, and must not even '
+      + 'create the directory');
+  } finally {
+    clean(dirs);
+  }
+});
+
+test('three merges in one pass produce three distinct requests, none overwriting another', async () => {
+  const dirs = harness();
+  const spy = spies();
+  try {
+    for (const [i, name] of ['a', 'b', 'c'].entries()) {
+      pullRequest(dirs, `170000000000${i}-${name}.json`, { action: 'closed', number: 40 + i, merged: true });
+    }
+    const summary = await run(dirs, spy, { onMerged: undefined });
+
+    assert.deepEqual(summary.deployRequested, [40, 41, 42]);
+    assert.equal(new Set(readdirSync(dirs.deployRequestsDir)).size, 3,
+      'enqueue names each request <epoch-ms>-<uuid>, so three requests inside one millisecond are '
+      + 'still three files — a collision here would silently drop a merge');
+  } finally {
+    clean(dirs);
+  }
+});
+
+/* A deploy request that cannot be written must not lose the merge.
+ *
+ * It runs AFTER the teardown succeeded, so the throw reaches runOnce's catch and the delivery is
+ * quarantined intact — recoverable by moving it back into the queue, which re-tears-down
+ * (idempotent) and re-requests. The alternative, swallowing it, would leave a merged pull request
+ * that never reached production and no record anywhere that it had not.
+ */
+test('a deploy request that cannot be written quarantines the delivery rather than losing it', async () => {
+  const dirs = harness();
+  const spy = spies();
+  try {
+    // A FILE where the directory must be: mkdirSync inside enqueue fails with ENOTDIR.
+    writeFileSync(dirs.deployRequestsDir, 'not a directory', 'utf8');
+    pullRequest(dirs, '1700000000000-a.json', { action: 'closed', number: 42, merged: true });
+    const summary = await run(dirs, spy, { onMerged: undefined });
+
+    assert.equal(summary.failed.length, 1);
+    assert.deepEqual(summary.deployRequested, []);
+    assert.deepEqual(readdirSync(dirs.failedDir), ['1700000000000-a.json'],
+      'the delivery must be in failed/, intact');
+    assert.deepEqual(readdirSync(dirs.queueDir), []);
+  } finally {
+    clean(dirs);
+  }
 });
 
 test('a pull_request action that changes no preview is dropped, without error', async () => {
@@ -362,7 +465,9 @@ test('a queue directory that does not exist yet is an empty pass, not a failure'
   try {
     rmSync(dirs.queueDir, { recursive: true, force: true });
     const summary = await run(dirs, spy);
-    assert.deepEqual(summary, { seen: 0, built: [], tornDown: [], ignored: [], failed: [] });
+    assert.deepEqual(summary, {
+      seen: 0, built: [], tornDown: [], ignored: [], failed: [], deployRequested: [],
+    });
   } finally {
     clean(dirs);
   }

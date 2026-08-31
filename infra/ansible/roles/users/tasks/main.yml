@@ -1,7 +1,7 @@
 ---
 # Two accounts. jamground-build runs the build itself and holds no privilege at all — no sudo,
 # no secrets — making "build runs unprivileged" literal. jamground is the
-# orchestrator: it holds exactly two fixed, no-argument sudo entries (flipping the release
+# orchestrator: it holds exactly three fixed, no-argument sudo entries (flipping the release
 # symlink, reloading nginx) and nothing else, so there is no path or option injection surface
 # to widen.
 
@@ -23,7 +23,7 @@
     password_lock: true
     state: present
 
-- name: Grant jamground its two no-argument sudo wrappers, and nothing else
+- name: Grant jamground its three no-argument sudo wrappers, and nothing else
   ansible.builtin.template:
     src: sudoers-jamground.j2
     dest: /etc/sudoers.d/jamground

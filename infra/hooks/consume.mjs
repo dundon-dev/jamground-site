@@ -28,6 +28,7 @@ try {
     failedDir: env('WEBHOOK_FAILED_DIR', `${state}/failed`),
     locksDir: env('WEBHOOK_LOCKS_DIR', `${state}/locks`),
     previewsRoot: env('JAMGROUND_PREVIEWS_ROOT', '/srv/previews'),
+    deployRequestsDir: env('JAMGROUND_DEPLOY_REQUESTS', '/var/lib/jamground/deploy-requests'),
     buildCommand: env('JAMGROUND_PREVIEW_BUILD', '/usr/local/bin/jamground-preview-build'),
   });
 } catch (err) {
@@ -44,7 +45,8 @@ try {
 if (summary.seen > 0) {
   console.log(`consume: ${summary.seen} job(s) — built ${JSON.stringify(summary.built)}, `
     + `torn down ${JSON.stringify(summary.tornDown)}, ignored ${summary.ignored.length}, `
-    + `failed ${summary.failed.length}`);
+    + `failed ${summary.failed.length}, `
+    + `requested deploy ${JSON.stringify(summary.deployRequested)}`);
 }
 
 for (const failure of summary.failed) {

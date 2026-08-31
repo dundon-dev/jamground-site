@@ -19,3 +19,31 @@ deploy_env_file: /etc/jamground/deploy.env
 # the first real build. Named in the same `<utc>-<contentSha7>-<siteSha7>` shape a real
 # release uses, with obviously-fake SHAs so it can never be mistaken for one.
 deploy_seed_release: "19700101T000000Z-seed000-seed000"
+
+# ── The automatic path: a merged pull request deploys production ──────────────────────────────
+#
+# Two accounts, two directories, and nothing shared but files. infra/hooks/lib/consumer.mjs runs
+# as jamground-build with no sudo and writes a request into deploy_requests_dir; the units below
+# run as the orchestrator account and drain it. roles/webhook repeats deploy_requests_dir as
+# `webhook_deploy_requests_dir` under this tree's cross-role convention (a role must not depend on
+# a sibling's variable name, and roles/webhook converges BEFORE this one), and
+# test/gates/deploy-request-path-unit.test.mjs holds the two — and consumer.mjs's own literal —
+# together rather than trusting them to agree.
+deploy_requests_dir: /var/lib/jamground/deploy-requests
+# Claimed, and failed, as SIBLINGS rather than subdirectories — the same reason
+# roles/webhook/defaults gives for webhook_failed_dir: anything left inside the watched directory
+# is seen again on the next trigger, for ever.
+deploy_requests_claimed_dir: /var/lib/jamground/deploy-requests.claimed
+deploy_requests_failed_dir: /var/lib/jamground/deploy-requests.failed
+deploy_request_runner_path: /usr/local/bin/jamground-deploy-requests
+deploy_request_service_name: jamground-deploy-request
+deploy_request_path_name: jamground-deploy-request.path
+# roles/isolation owns this slice and its caps; repeated here as a literal for the same reason
+# webhook_preview_slice is repeated in roles/webhook, and gated the same way.
+deploy_production_slice: jamground-production.slice
+# roles/users owns this account; repeated for the same reason.
+deploy_orchestrator_user: jamground
+# One hour. `npm ci && npm run build` is minutes, and a deploy may first wait out the shared build
+# lock, whose own timeout is 900s — so this has to cover both. systemd's default for a oneshot is
+# 90 seconds, which would kill every automatic deploy mid-build.
+deploy_request_timeout_sec: 3600

@@ -1,11 +1,19 @@
 # {{ ansible_managed }}
 #
-# The per-build resource envelope for a production deploy. ExecStart is a placeholder — today's
-# jamground-deploy (roles/deploy) is invoked directly, not through systemd, so nothing
-# instantiates this unit yet. What this ships, and what verify/isolation.yml asserts, is the
-# envelope itself: MemoryMax as a backstop against a hung build consuming the box even on the
-# favoured side, RuntimeMaxSec so a stuck build cannot run forever, PrivateNetwork=yes so a build
-# in progress cannot reach outward. Wiring a real command through it is a later task's job.
+# The per-build resource envelope for a production deploy. ExecStart is a placeholder, and stays
+# one — this is not a task nobody got to. jamground-deploy is invoked directly rather than through
+# systemd, and two settings here are why it must be: User=jamground-build cannot flip the release
+# symlink, and PrivateNetwork=yes cannot fetch the merge being deployed. Those are the same two
+# reasons the queue consumer calls jamground-preview-build directly instead of starting the
+# templated instance unit.
+#
+# The automatic deploy (roles/deploy's jamground-deploy-request.service) therefore joins
+# {{ isolation_production_slice }} rather than being instantiated through this unit — the slice is
+# what carries the CPU weight, which is the part that matters when a preview build is running
+# beside it. What this unit ships, and what verify/isolation.yml asserts, is the envelope itself:
+# MemoryMax as a backstop against a hung build consuming the box even on the favoured side,
+# RuntimeMaxSec so a stuck build cannot run forever, PrivateNetwork=yes so a build in progress
+# cannot reach outward.
 [Unit]
 Description=jamground production build — per-build resource envelope
 After=network.target

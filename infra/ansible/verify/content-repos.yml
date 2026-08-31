@@ -110,3 +110,28 @@
         fail_msg: >-
           {{ content_repos_content_checkout }}/content/settings/site.yaml does not exist — the
           build cannot resolve its locales without it.
+
+    # The shared build lock, asserted as OWNERSHIP rather than existence, because existence is not
+    # the failure. Neither jamground-deploy nor jamground-preview-build creates this file
+    # deliberately — `flock` and `exec 9>` each create it on first use, as whoever got there first.
+    # If that is root (this role's own deploy, or an operator following the RUNBOOK) the file is
+    # root-owned, and every preview build from then on dies with EACCES on a lock rather than on
+    # anything resembling a lock problem. This role creates it first, owned by the account that
+    # cannot create it itself; that is what this checks.
+    - name: Stat the shared build lock both build scripts flock
+      ansible.builtin.stat:
+        path: "{{ content_repos_site_checkout }}/.build.lock"
+      register: content_repos_build_lock_stat
+
+    - name: Assert the build lock belongs to the unprivileged build account
+      ansible.builtin.assert:
+        that:
+          - content_repos_build_lock_stat.stat.exists
+          - content_repos_build_lock_stat.stat.pw_name == 'jamground-build'
+        fail_msg: >-
+          {{ content_repos_site_checkout }}/.build.lock is missing, or owned by
+          {{ content_repos_build_lock_stat.stat.pw_name | default('nobody') }} rather than
+          jamground-build. Root can open a lock owned by anyone; jamground-build cannot open one
+          owned by root — so every preview build fails on the lock, for a reason that looks like
+          nothing to do with locking.
+

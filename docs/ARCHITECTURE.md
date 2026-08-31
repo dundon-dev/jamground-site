@@ -139,6 +139,27 @@ before it existed as a chain:
 5. **Closing the pull request removes it**, so the previews filesystem holds one static root per
    *open* change and no more.
 
+Two things about a preview are worth knowing before reading one as if it were the site.
+
+**`/` on a preview host is the production redirect, and it had to be added deliberately.** The
+build emits no bare-root `index.html` — only the default locale's — so every server block that
+serves this site needs `location = / { return 301 /en-us/; }` or `/` falls through `try_files` to a
+root with no index and nginx answers 403. The production blocks always had it and the preview
+blocks did not, for the whole of this pipeline's earlier life: the previews were built, correct and
+serving at `/en-us/`, while the single address `previewUrlFor()` hands an editor was the one that
+could not work. Nothing caught it, because every check on the box — `verify/nginx.yml`,
+`jamground-selfcheck` — sent the production Host, and the one offline gate that knew the preview
+URL ended in `/` never asked what answered it. `verify/nginx.yml` now sends a `pr-<N>.preview.`
+Host, and `test/gates/preview-work-root.test.mjs` now derives the preview blocks' expected redirect
+target from the production blocks so the two cannot diverge again.
+
+**A preview's canonical URLs point at production.** `astro.config.mjs` sets `site` to the
+production origin for both builds — that is the same "one flag is the entire difference" property
+above, and changing it per build would fork the two code paths this design exists to keep unified —
+so `<link rel="canonical">` and `hreflang` in a preview name `https://<domain>/…`, not the preview
+host. Following one leaves the preview. Nothing is wrong with the preview; the canonical is simply
+about where the page will live, not where it is being shown.
+
 Nothing in that chain runs as anything but `jamground-build`, the account with no sudo at all.
 That is also why the consumer invokes the build script directly rather than starting
 `jamground-preview-build@<N>.service`: `systemctl start` with an instance name is an
@@ -164,24 +185,58 @@ log knew. `verify/nginx.yml` now asserts the vhost against `nginx -T`'s output a
 `verify/webhook.yml` POSTs to the name and requires the receiver's own `401`, so the same gap
 cannot reopen quietly.
 
-**Previews are built, but the editor still does not link to them.** The URL is live and a change
-now populates it; nothing in `wp-admin` tells an editor it exists. That is deliberate for as long
-as the link would be a guess — it becomes a real control once the shell can tell whether a given
-pull request's build has landed yet, rather than handing out a URL that may still be 404 for
-another minute.
-
-**There is no automatic production deploy.** `jamground-deploy` (`roles/deploy`) is the real
-build, verify, release-directory and symlink-flip mechanism, and it is still invoked by hand: a
-merged pull request updates the content repository and does not update the live site. The seam is
-`deployProductionOnMerge` in `infra/hooks/lib/consumer.mjs` — a named, called, deliberately empty
-function on the `closed` + `merged` path, so there is exactly one place to wire and it is already
-reached by the tests. Wiring it needs three things it does not have yet: a way to run the flip,
-which needs the `jamground` account's two no-argument sudo wrappers rather than the
-`jamground-build` account the consumer runs as; one lock shared with `jamground-preview-build`,
-because `jamground-deploy` starts with an `npm ci` that deletes the dependency tree a preview
-build may be using in the same checkout; and a decision about what a failed automatic deploy
-should do that a failed manual one does not.
-
 **`jamground-production-build.service` is a resource envelope, not a build.** Its `ExecStart` is
-still `/bin/true`; `jamground-deploy` is invoked directly rather than through systemd, so the
-envelope constrains nothing today. (Its preview counterpart is no longer a placeholder.)
+still `/bin/true`, and it stays that way for two specific reasons rather than for want of a pass:
+it is `User=jamground-build`, which cannot flip the release symlink, and `PrivateNetwork=yes`,
+which cannot fetch the merge it would be deploying. The automatic deploy below therefore joins
+`jamground-production.slice` — inheriting the CPU weight, which is the part that matters when a
+preview build is running beside it — rather than being instantiated through this unit. (Its
+preview counterpart is no longer a placeholder either.)
+
+**Two paragraphs that used to be here have been discharged, and are worth keeping in outline
+because each names a gap that looked exactly like a working feature.** Previews were built while
+the editor did not link to them; the shell now shows the staging address when a change opens, on
+save, and on send-for-review. And there was no automatic production deploy: a merged pull request
+updated the content repository and left the live site alone, which ran for three merges with every
+unit active and every check green. Both are described where they now work — the preview
+address in the editor section above, and the deploy below.
+
+## Deploying on merge: a request an unprivileged process can write
+
+`deployProductionOnMerge` in `infra/hooks/lib/consumer.mjs` was a named, called, deliberately empty
+function for exactly as long as three prerequisites went unanswered. It is now the seam it was
+reserved as, and what it does is write a file.
+
+The queue consumer runs as `jamground-build`, which holds **no sudo at all**. On `closed` +
+`merged` it enqueues one small JSON request into `/var/lib/jamground/deploy-requests/` — the same
+atomic temp-then-rename `enqueue` the delivery queue uses, so a `.path` unit's `*.json` glob can
+never fire on a half-written one. `jamground-deploy-request.path` starts
+`jamground-deploy-request.service`, which runs as `jamground` and **takes nothing from that request
+but its existence**: it claims every file, invokes a fixed no-argument wrapper, and deletes what it
+claimed. What an unprivileged decision can say is *a merge happened*; what it cannot say is *what
+to run*. That asymmetry is the whole design, and it is why the handover is a directory of files
+rather than a call.
+
+The three prerequisites, each discharged rather than worked around:
+
+1. **Privilege.** `sudo env JAMGROUND_*_CHECKOUT=… jamground-deploy` is an argument-taking
+   privileged command, and this box grants none. `jamground-deploy-now` (`roles/deploy`, root-owned
+   `0700`) fixes both checkout paths and the build account inside itself, so the third sudoers
+   entry — the only privilege this added — still takes no arguments. It also refreshes the content
+   checkout first, because `jamground-deploy` builds what is on disk and `roles/content_repos` only
+   pulls at converge time: without that step an automatic deploy would rebuild the same commit,
+   record the same `contentSha`, flip, and exit 0.
+2. **One lock.** Both build scripts now `flock` `$JAMGROUND_SITE_CHECKOUT/.build.lock`. The path is
+   derived rather than declared, and every alternative is unopenable by one side: the previews
+   image is a different filesystem the deploy must not write, and `/srv/jamground` is not in the
+   consumer's `ReadWritePaths` — putting it there would hand a build that executes pull-request
+   content write access to `releases/` and `current`. The converge creates the file owned by
+   `jamground-build`, because whoever locks first creates it and a root-owned lock is `EACCES` for
+   every preview build afterwards.
+3. **A failure policy.** The deploy itself is unchanged — it never flips on a failure, so
+   production keeps serving. What is added is being *noticed*, since nobody watches an automatic
+   deploy: requests move to `deploy-requests.failed/` intact, the unit stays in `failed`, and
+   `jamground-selfcheck` alarms on that, on a request left unclaimed for ten minutes (a `.path`
+   unit that has silently stopped firing), and on `current`'s manifest naming an older content SHA
+   than the checkout holds. **There is no automatic retry**: a content defect that fails the build
+   would otherwise rebuild for ever.

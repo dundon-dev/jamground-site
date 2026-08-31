@@ -26,10 +26,17 @@
  * those jobs are exactly the ones nobody gets back. A missing precondition is retried on the next
  * tick, with the queue untouched; a job that is genuinely bad is quarantined once.
  *
+ * WHY THE DEPLOY-REQUEST DIRECTORY IS NOT ONE OF THOSE PRECONDITIONS. It is checked nowhere, on
+ * purpose: `enqueue` creates it if it can, and if it cannot, exactly one merged job fails and is
+ * quarantined. Promoting it to a precondition would stop the whole pass — taking every preview
+ * build down with it — over a directory only the rarest job needs.
+ *
  * WHY THIS PROCESS RUNS THE BUILD DIRECTLY, rather than starting
  * `jamground-preview-build@<N>.service`. This runs as jamground-build, and roles/users grants
- * that account no sudo at all — the two no-argument wrappers belong to `jamground`, and both take
- * no arguments precisely so there is no path or option injection surface to widen.
+ * that account no sudo at all — the no-argument wrappers belong to `jamground`, and each takes
+ * no arguments precisely so there is no path or option injection surface to widen. That is
+ * still true of the production deploy this file now requests: it writes a file, and the
+ * `jamground`-side unit that reads it invokes a wrapper that takes no arguments either.
  * `systemctl start jamground-preview-build@<N>` is an argument-taking privileged command, so
  * routing the automatic path through systemd would mean widening the one grant this box has.
  * The unit stays real and instantiable by hand; the automatic path calls the same script.
@@ -40,11 +47,17 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { withLock } from './queue.mjs';
+import { withLock, enqueue } from './queue.mjs';
 
 /** The script roles/isolation ships. Repeated as a literal for the same reason every cross-role
  *  path in this tree is: application code cannot read a role's variables. */
 export const DEFAULT_BUILD_COMMAND = '/usr/local/bin/jamground-preview-build';
+
+/** Where a merged pull request's deploy REQUEST is written. roles/deploy creates it; roles/webhook
+ *  names it too and hands it to this process through the environment. A literal here for the same
+ *  reason DEFAULT_BUILD_COMMAND is one, and gated against both roles by
+ *  test/gates/deploy-request-path-unit.test.mjs rather than promised. */
+export const DEFAULT_DEPLOY_REQUESTS_DIR = '/var/lib/jamground/deploy-requests';
 
 /** A pull request in one of these states has a head commit that should be on the web. `synchronize`
  *  is GitHub's name for "the head moved" — a push to the branch — and is the one that makes a
@@ -76,23 +89,42 @@ function headRef(raw) {
 }
 
 /**
- * THE PRODUCTION-DEPLOY SEAM. A merged pull request is the moment production should rebuild, and
- * this is where that will be triggered from — deliberately, and for now, by doing nothing at all.
+ * THE PRODUCTION-DEPLOY SEAM. A merged pull request is the moment production rebuilds, and this is
+ * where that is triggered from — by writing a REQUEST, and never by deploying.
  *
- * It does nothing because triggering it here today would be wrong twice over. Production deploy
- * is `jamground-deploy` (roles/deploy): it runs `npm ci && npm run build` in the SHARED site
- * checkout and then flips `/srv/jamground/current`, and nothing on this box currently serialises
- * that against a preview build running in the same checkout out of this same process. And the
- * flip needs the two no-argument sudo wrappers that belong to the `jamground` account, which this
- * consumer is not — see this file's header. Auto-deploy is its own pass; what it needs is written
- * out in docs/ARCHITECTURE.md.
+ * This function used to be empty, and its comment gave three reasons why: a production deploy runs
+ * `npm ci` in the SHARED site checkout with nothing serialising it against a preview build; the
+ * flip needs privileges this process deliberately does not hold; and a failed automatic deploy
+ * needs a policy a failed manual one does not. All three are now answered — the two build scripts
+ * share one flock, roles/deploy owns a `jamground`-side unit that watches this directory, and that
+ * unit quarantines a request whose deploy failed — but the third reason is the one that shaped
+ * this function, so it is worth being precise about what it does NOT do.
  *
- * It is a named function rather than a comment so that the call site is real, is reached by the
- * tests, and shows up in a grep for whoever wires it: there is exactly one place to change.
+ * IT WRITES A SIGNAL, NOT A COMMAND. This process runs as jamground-build and holds no sudo at
+ * all. What it can say is "a merge happened"; what it cannot say is what to run. Nothing on the
+ * privileged side parses this file: the unit's ExecStart is fixed, the wrapper it reaches takes no
+ * arguments, and the two checkout paths are literals in a root-owned 0700 script. The number and
+ * the job name below are for the journal and for whoever reads a quarantined request — no byte of
+ * them reaches an argv. That asymmetry IS the privilege separation, and it is why this is a
+ * directory of files rather than a call.
+ *
+ * IT REUSES `enqueue` RATHER THAN WRITING A FILE. Complete or absent, never partial — the request
+ * is written `.<name>.tmp` and renamed, so the `.path` unit's `*.json` glob cannot fire on a
+ * request that does not exist yet. Same primitive, same property, as the delivery queue.
+ *
+ * A FAILURE HERE QUARANTINES THE DELIVERY, and that is correct rather than a rough edge. It runs
+ * after the teardown succeeded, so the throw reaches `runOnce`'s catch, the delivery moves intact
+ * into `failedDir`, and the run exits non-zero. Re-running tears down again (idempotent) and
+ * re-requests. The one outcome ruled out everywhere in this file is a merge that stops existing
+ * without having been acted on, and a deploy request that could not be written is exactly that.
  */
-export function deployProductionOnMerge(/* { number, ref, payload } */) {
-  // Intentionally empty. See the doc comment above; do not make this trigger a deploy without
-  // reading it.
+export function deployProductionOnMerge({ number, job } = {}, requestsDir = DEFAULT_DEPLOY_REQUESTS_DIR) {
+  return enqueue(requestsDir, {
+    reason: 'pull request merged',
+    number,
+    job,
+    requestedAt: new Date().toISOString(),
+  });
 }
 
 /**
@@ -188,10 +220,11 @@ export async function runOnce({
   failedDir,
   locksDir,
   previewsRoot,
+  deployRequestsDir = DEFAULT_DEPLOY_REQUESTS_DIR,
   buildCommand = DEFAULT_BUILD_COMMAND,
   build,
   teardown,
-  onMerged = deployProductionOnMerge,
+  onMerged = (decision) => deployProductionOnMerge(decision, deployRequestsDir),
   log = console,
 } = {}) {
   for (const [name, value] of Object.entries({ queueDir, failedDir, locksDir, previewsRoot })) {
@@ -215,7 +248,7 @@ export async function runOnce({
   const doBuild = build ?? previewBuilder(buildCommand);
   const doTeardown = teardown ?? previewTeardown(previewsRoot);
 
-  const summary = { seen: 0, built: [], tornDown: [], ignored: [], failed: [] };
+  const summary = { seen: 0, built: [], tornDown: [], ignored: [], failed: [], deployRequested: [] };
   if (!existsSync(queueDir)) return summary;
 
   // `.`-prefixed names are enqueue's own half-written temp files, which it renames into place;
@@ -238,7 +271,12 @@ export async function runOnce({
         await withLock(locksDir, `preview-${decision.number}`, () => doBuild(decision));
       } else if (decision.action === 'teardown') {
         await withLock(locksDir, `preview-${decision.number}`, () => doTeardown(decision));
-        if (decision.merged) onMerged(decision);
+        // The job NAME goes with the request, so a quarantined deploy can be traced back to the
+        // delivery that caused it without correlating two directories by timestamp.
+        if (decision.merged) {
+          onMerged({ ...decision, job: name });
+          summary.deployRequested.push(decision.number);
+        }
       }
     } catch (err) {
       const moved = quarantine(queuePath, failedDir, name, log);

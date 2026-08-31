@@ -26,6 +26,18 @@
       - JAMGROUND_CONTENT_REPO
       - JAMGROUND_CONTENT_BRANCH
       - JAMGROUND_OAUTH_CLIENT_ID
+    # The automatic-deploy chain, as literals for the same reason. Every one of these is a
+    # roles/deploy or roles/users default that this play never loads — and repeating them here is
+    # not duplication being tolerated, it is the point: an assertion that read the same variable
+    # the converge wrote would agree with a wrong value as readily as a right one.
+    jamground_deploy_now: /usr/local/sbin/jamground-deploy-now
+    deploy_orchestrator_user: jamground
+    deploy_production_slice: jamground-production.slice
+    deploy_request_service_name: jamground-deploy-request
+    deploy_request_path_name: jamground-deploy-request.path
+    deploy_requests_dir: /var/lib/jamground/deploy-requests
+    deploy_requests_claimed_dir: /var/lib/jamground/deploy-requests.claimed
+    deploy_requests_failed_dir: /var/lib/jamground/deploy-requests.failed
   tasks:
     - name: Stat current
       ansible.builtin.stat:
@@ -178,3 +190,112 @@
           {{ (deploy_env_slurp.content | b64decode).splitlines()
              | select('match', '^[A-Za-z_][A-Za-z0-9_]*=') | map('regex_replace', '=.*$', '')
              | list }}
+
+    # ── The automatic path: a merged pull request deploys production ──────────────────────────
+    #
+    # Every check here is about a chain whose failures are silent. A .path unit watching a
+    # directory that does not exist waits for ever and reports active; a Type=oneshot with
+    # systemd's 90-second default timeout kills a build part-way through and reports the script as
+    # having failed; NoNewPrivileges=yes — which every other unit on this box sets — breaks sudo
+    # rather than narrowing it. Each is asserted against what systemd has actually LOADED, not
+    # against the template that produced it, for the reason verify/nginx.yml gives about the hooks
+    # vhost: a template that obviously has the setting in it is exactly what was believed at the
+    # time.
+    - name: Stat the deploy-now wrapper
+      ansible.builtin.stat:
+        path: "{{ jamground_deploy_now }}"
+      register: deploy_now_stat
+
+    - name: Assert the deploy-now wrapper is present, root-owned and not group- or world-readable
+      ansible.builtin.assert:
+        that:
+          - deploy_now_stat.stat.exists
+          - deploy_now_stat.stat.pw_name == 'root'
+          - deploy_now_stat.stat.mode == '0700'
+        fail_msg: >-
+          {{ jamground_deploy_now }} is missing or not a root-owned 0700 file. It is what fixes
+          both checkout paths and the build account, so that the sudo grant naming it can take no
+          arguments; a writable or readable copy is a grant that takes whatever it says.
+
+    - name: Query the deploy-request service's loaded settings
+      ansible.builtin.command: >-
+        systemctl show {{ deploy_request_service_name }}.service
+        --property=User --property=NoNewPrivileges --property=TimeoutStartUSec --property=Slice
+      register: deploy_request_show
+      check_mode: false
+      changed_when: false
+
+    - name: Assert the deploy-request service runs privileged enough to flip and long enough to build
+      ansible.builtin.assert:
+        that:
+          - ('User=' ~ deploy_orchestrator_user) in deploy_request_show.stdout_lines
+          - "'NoNewPrivileges=no' in deploy_request_show.stdout_lines"
+          - ('Slice=' ~ deploy_production_slice) in deploy_request_show.stdout_lines
+          - deploy_request_timeout_loaded | int > 90
+        fail_msg: >-
+          {{ deploy_request_service_name }}.service is loaded as
+          {{ deploy_request_show.stdout_lines | join(', ') }}. It must run as
+          {{ deploy_orchestrator_user }} (the account holding the wrappers), with
+          NoNewPrivileges=no (sudo is setuid; yes breaks the grant rather than narrowing it), in
+          {{ deploy_production_slice }}, and with a start timeout longer than 90 seconds —
+          systemd's oneshot default, which kills every deploy part-way through npm run build.
+      vars:
+        deploy_request_timeout_loaded: >-
+          {{ ((deploy_request_show.stdout_lines
+               | select('match', '^TimeoutStartUSec=') | first | default('TimeoutStartUSec=0'))
+              | regex_replace('^TimeoutStartUSec=', '') | regex_replace('[^0-9]', '') | int)
+             // 1000000 }}
+
+    - name: Query the deploy-request path unit's state
+      ansible.builtin.command: systemctl is-enabled {{ deploy_request_path_name }}
+      register: deploy_request_path_enabled
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the path unit is enabled — nothing else ever starts the service
+      ansible.builtin.assert:
+        that:
+          - deploy_request_path_enabled.stdout == 'enabled'
+        fail_msg: >-
+          {{ deploy_request_path_name }} is {{ deploy_request_path_enabled.stdout }}. Disabled, it
+          does not survive a reboot, and a merged pull request then updates the content repository
+          and never the live site — with every other signal on this box still green.
+
+    - name: Stat the three deploy-request directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: deploy_request_dir_stats
+      loop:
+        - "{{ deploy_requests_dir }}"
+        - "{{ deploy_requests_claimed_dir }}"
+        - "{{ deploy_requests_failed_dir }}"
+
+    - name: Assert the incoming queue is writable by the writer and drainable by the reader
+      ansible.builtin.assert:
+        that:
+          - incoming.stat.exists
+          - incoming.stat.pw_name == 'jamground-build'
+          - incoming.stat.gr_name == deploy_orchestrator_user
+          - incoming.stat.mode == '0770'
+          - (deploy_request_dir_stats.results | selectattr('stat.exists') | list | length) == 3
+        fail_msg: >-
+          The deploy-request directories are wrong. The incoming queue must be
+          jamground-build:{{ deploy_orchestrator_user }} 0770 — the reader MOVES files out of it,
+          which needs write on the directory, and 0750 would leave every merge quarantined
+          silently and for ever.
+      vars:
+        incoming: "{{ deploy_request_dir_stats.results | first }}"
+
+    - name: Assert the shipped deploy script takes the shared build lock
+      ansible.builtin.assert:
+        that:
+          - "'flock -w' in (deploy_script_slurp.content | b64decode)"
+          - "'.build.lock' in (deploy_script_slurp.content | b64decode)"
+        fail_msg: >-
+          The jamground-deploy on this box does not take the build lock. Its `npm ci` deletes
+          node_modules in the site checkout that every preview build reads, and nothing else
+          serialises the two — so an automatic deploy can pull the dependency tree out from under
+          a preview build that is running. (deploy_script_slurp is the same read this play already
+          made above, reused rather than repeated.)
+

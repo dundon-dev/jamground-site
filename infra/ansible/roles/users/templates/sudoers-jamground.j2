@@ -1,8 +1,15 @@
 # Managed by Ansible (roles/users) — do not edit on the box, changes will be overwritten.
 #
-# Two fixed commands, no arguments accepted anywhere in either line — there is no path or
+# Three fixed commands, no arguments accepted anywhere in any line — there is no path or
 # option injection surface for jamground to widen: the privileged half —
-# flipping the symlink, reloading nginx — belongs to a separate orchestrator user holding two
-# no-argument sudo wrappers.
+# flipping the symlink, reloading nginx, and running a whole deploy — belongs to a separate
+# orchestrator user holding three no-argument sudo wrappers.
+#
+# THE THIRD ONE IS THE ONLY PRIVILEGE THE AUTO-DEPLOY PASS ADDED, and the property that matters is
+# unchanged: it takes no arguments. jamground-deploy-now fixes both checkout paths and the account
+# the build drops to inside a root-owned 0700 script, so the caller chooses nothing. The account
+# that DECIDES a deploy should happen — jamground-build, running the webhook queue consumer — still
+# holds no sudo at all; it writes a request file and cannot say what to run.
 jamground ALL=(root) NOPASSWD: {{ jamground_release_switch }}
 jamground ALL=(root) NOPASSWD: {{ jamground_reload_nginx }}
+jamground ALL=(root) NOPASSWD: {{ jamground_deploy_now }}

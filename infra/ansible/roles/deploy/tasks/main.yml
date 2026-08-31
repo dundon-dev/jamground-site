@@ -63,6 +63,80 @@
     group: root
     mode: '0700'
 
+# ── The automatic path ────────────────────────────────────────────────────────────────────────
+#
+# Three directories, and the owner of each is the account that WRITES it while the group is the
+# account that must read it. Deliberately not solved by putting `jamground` in the
+# `jamground-build` group: /etc/jamground/webhook.secret is 0640 root:jamground-build, so that
+# membership would hand the orchestrator account GitHub's HMAC secret for the sake of a directory.
+- name: Ensure the deploy-request queue exists, writable by the account that decides
+  ansible.builtin.file:
+    path: "{{ deploy_requests_dir }}"
+    state: directory
+    owner: jamground-build
+    group: "{{ deploy_orchestrator_user }}"
+    # 0770: the reader does not merely read here, it MOVES files out, which needs write on the
+    # directory. 0750 would leave every merge quarantined, silently, for ever.
+    mode: '0770'
+
+- name: Ensure the claimed and failed request directories exist, owned by the account that drains
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ deploy_orchestrator_user }}"
+    group: "{{ item.group }}"
+    mode: '0750'
+  loop:
+    - path: "{{ deploy_requests_claimed_dir }}"
+      group: "{{ deploy_orchestrator_user }}"
+    # The failed directory's group is jamground-build so that jamground-selfcheck — which runs as
+    # that account — can count what is in it. That count is the alarm for a merge that never
+    # reached production.
+    - path: "{{ deploy_requests_failed_dir }}"
+      group: jamground-build
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Ship the deploy-now wrapper — a whole deploy, no arguments
+  ansible.builtin.copy:
+    src: jamground-deploy-now
+    dest: "{{ jamground_deploy_now }}"
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Ship the request-queue runner the orchestrator account executes
+  ansible.builtin.copy:
+    src: jamground-deploy-requests
+    dest: "{{ deploy_request_runner_path }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the deploy-request units
+  ansible.builtin.template:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item | replace('.j2', '') }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - jamground-deploy-request.service.j2
+    - jamground-deploy-request.path.j2
+  notify: reload systemd daemon
+
+- name: Flush handlers so the units exist before they are enabled
+  ansible.builtin.meta: flush_handlers
+
+# The PATH unit is enabled; the SERVICE is not. A Type=oneshot that is `enabled` runs once at boot
+# and never again — which would deploy on every reboot for no reason and still never deploy on a
+# merge.
+- name: Enable the deploy-request path unit
+  ansible.builtin.systemd:
+    name: "{{ deploy_request_path_name }}"
+    enabled: true
+    state: started
+
 - name: Ship the reload-nginx wrapper — the other privileged half of a deploy, no arguments
   ansible.builtin.copy:
     src: jamground-reload-nginx

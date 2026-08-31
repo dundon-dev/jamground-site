@@ -28,12 +28,15 @@
 #
 # TWO HALVES, TWO PRIVILEGE LEVELS, AND THIS SCRIPT SEPARATES THEM ITSELF. The build runs as
 # jamground-build — unprivileged, no sudo, no secrets, because it executes repository content.
-# The flip needs the two no-argument sudo wrappers only `jamground` holds, or root. Invoked as
+# The flip needs the no-argument sudo wrappers only `jamground` holds, or root. Invoked as
 # root, this script DROPS to jamground-build for `npm ci && npm run build` and then calls the two
 # wrappers directly; invoked as anything else it builds as itself and reaches the wrappers through
 # `sudo -n`. One question, `id -u`, asked once and answered the same way in both places: "can I
 # drop for the build" and "do I need the grant to flip" are the same question about the same
 # account. `sudo -n` degrades cleanly either way, failing loudly rather than hanging on a prompt.
+#
+# IT SERIALISES AGAINST PREVIEW BUILDS, which it did not until merges could trigger it. See the
+# `build_lock` block below for the path, why every other path is wrong, and why it re-execs.
 #
 # THIS PARAGRAPH USED TO SAY THE FIRST SENTENCE AND THE CODE DID NOT DO IT. Every
 # `npm ci && npm run build` ran as whoever invoked the script, and roles/content_repos invoked it
@@ -53,6 +56,42 @@ reload_nginx=/usr/local/sbin/jamground-reload-nginx
 
 : "${JAMGROUND_SITE_CHECKOUT:?JAMGROUND_SITE_CHECKOUT must name the site repository checkout}"
 : "${JAMGROUND_CONTENT_CHECKOUT:?JAMGROUND_CONTENT_CHECKOUT must name the content repository checkout}"
+
+# ONE LOCK, SHARED WITH jamground-preview-build, AND WHY IT IS HERE RATHER THAN LOWER DOWN.
+#
+# `npm ci` below DELETES node_modules before repopulating it, in the SHARED site checkout that
+# jamground-preview-build reads for every preview. Preview builds have serialised against each
+# other since they existed; a production deploy took no lock at all, so the one overlap that
+# actually corrupts something — this script pulling the dependency tree out from under a preview
+# build mid-flight — was the one nothing prevented. That was survivable while every deploy was an
+# operator's deliberate act. It stopped being survivable the moment a merged pull request could
+# start one on its own.
+#
+# THE LOCK PATH IS DERIVED FROM THE CHECKOUT, and every other candidate is unopenable by one side
+# or the other. /srv/previews/.build.lock, where jamground-preview-build's lock used to live, is on
+# the fixed-size loopback image (roles/isolation) that a production deploy has no business writing
+# and that does not exist before that role converges. /srv/jamground/… would need /srv/jamground in
+# the queue consumer's ReadWritePaths (roles/webhook runs it under ProtectSystem=strict), which
+# would hand a build that executes pull-request content write access to releases/ and the `current`
+# symlink. The site checkout is already a ReadWritePath — because the build writes it — so it is
+# the one inode both accounts can open, inside the sandbox and out.
+#
+# RE-EXEC UNDER flock(1) RATHER THAN `exec 9>` + `flock 9`. test/gates/deploy-unprivileged-build
+# EXECUTES this script against a PATH of stubs, on machines with no /srv/jamground and, on macOS,
+# no flock at all. A shell redirection cannot be stubbed by a PATH entry; an external command can.
+# -E 75 separates "could not acquire the lock" from whatever the child itself exited with, and
+# JAMGROUND_DEPLOY_LOCKED is what stops the re-exec re-executing.
+build_lock="$JAMGROUND_SITE_CHECKOUT/.build.lock"
+if [ -z "${JAMGROUND_DEPLOY_LOCKED:-}" ]; then
+  export JAMGROUND_DEPLOY_LOCKED=1
+  status=0
+  flock -w 900 -E 75 "$build_lock" "$0" "$@" || status=$?
+  if [ "$status" -eq 75 ]; then
+    echo "jamground-deploy: timed out after 900s waiting for $build_lock; a preview build is still" \
+      "using $JAMGROUND_SITE_CHECKOUT. current is unchanged." >&2
+  fi
+  exit "$status"
+fi
 
 content_sha=$(git -C "$JAMGROUND_CONTENT_CHECKOUT" rev-parse --short=7 HEAD)
 site_sha=$(git -C "$JAMGROUND_SITE_CHECKOUT" rev-parse --short=7 HEAD)
@@ -121,7 +160,7 @@ npm run build
 '
 
 if [ "$(id -u)" -eq 0 ]; then
-  # `-u` needs root, and root is the only account here that has it: jamground holds exactly two
+  # `-u` needs root, and root is the only account here that has it: jamground holds exactly three
   # no-argument sudo entries and jamground-build holds none, which is what makes `id -u` the whole
   # test rather than a name comparison. `-n` for the reason the flip below uses it — a box that
   # cannot authorise this must fail loudly, not wait on a prompt. `-H` sets HOME to

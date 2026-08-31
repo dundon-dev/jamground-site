@@ -1,0 +1,79 @@
+#!/bin/bash
+# jamground-deploy-now — the THIRD no-argument root wrapper, and the only new privilege the
+# auto-deploy pass added.
+#
+# WHY IT EXISTS AT ALL. The automatic path has to do exactly what infra/RUNBOOK.md tells an
+# operator to do by hand: `sudo env JAMGROUND_SITE_CHECKOUT=... JAMGROUND_CONTENT_CHECKOUT=...
+# /usr/local/bin/jamground-deploy`. That is an ARGUMENT-TAKING privileged command, and this box
+# grants none: roles/users' two existing entries take no arguments precisely so there is no path or
+# option injection surface. Written down here instead, the grant carries no path and no option a
+# caller can choose — both checkouts and the account the build drops to are fixed in a root-owned
+# 0700 file, exactly as the other two wrappers fix theirs.
+#
+# WHY IT REFRESHES THE CONTENT CHECKOUT, and why that could not be left to jamground-deploy. That
+# script says plainly that keeping the checkouts pulled is roles/content_repos' job and that it
+# "only builds what is already on disk" — and roles/content_repos only runs at converge time. A
+# deploy fired by a merge against a checkout nothing refreshed rebuilds the SAME commit, records
+# the same contentSha in the manifest, flips, and exits 0. Every signal on the box stays green and
+# the live site does not move, which is precisely the failure this whole pass exists to end.
+#
+# WHY IT HANDS jamground-deploy ROOT. Not "the deploy runs as root": that script performs the two
+# halves at two privilege levels itself, dropping to jamground-build for `npm ci && npm run build`
+# and keeping only the flip privileged. Root is the one account that can make that drop. Running it
+# as `jamground` instead would build AS jamground and leave the shared site checkout owned by an
+# account jamground-preview-build cannot write — the defect
+# test/gates/deploy-unprivileged-build.test.mjs exists for, in a new colour.
+#
+# NO SKIP-IF-UNCHANGED SHORT-CIRCUIT, deliberately. roles/content_repos' own tasks record what a
+# latching gate cost the last time one was tried here: it skipped the build and reported converged,
+# a false green. An unconditional rebuild is idempotent and self-healing.
+#
+# Paths are literals, the same convention jamground-deploy, jamground-preview-build and
+# jamground-selfcheck all state: a script systemd invokes with no control node in the loop cannot
+# template itself at run time. A change to any of them must be mirrored in
+# roles/deploy/defaults/main.yml by hand.
+set -euo pipefail
+
+site=/srv/jamground/repos/site
+content=/srv/jamground/repos/content
+content_key=/etc/jamground/deploy-keys/content_ed25519
+deploy_script=/usr/local/bin/jamground-deploy
+build_user=jamground-build
+
+fail() {
+  echo "jamground-deploy-now: $1" >&2
+  exit 1
+}
+
+# As jamground-build: it owns the checkout, and it is the only account that can read the read-only
+# content deploy key (0600, roles/content_repos). `env` because sudoers grants no per-command
+# environment here, and -H so git finds a writable HOME rather than root's.
+as_build() { sudo -n -H -u "$build_user" env "$@"; }
+
+# The branch is read out of the checkout rather than out of /etc/jamground/deploy.env, for two
+# reasons. It cannot then disagree with what roles/content_repos actually cloned (`version: HEAD`,
+# the remote's default branch, which is not necessarily jamground_content_branch). And it keeps
+# this script from naming any of the six identity values at all, which is what
+# test/gates/deploy-env-names.test.mjs holds the deploy path to.
+branch=$(as_build git -C "$content" rev-parse --abbrev-ref HEAD) \
+  || fail "could not read the current branch of $content"
+[ "$branch" != "HEAD" ] \
+  || fail "$content is in detached HEAD; refusing to guess which branch production follows"
+
+echo "jamground-deploy-now: refreshing $content to origin/$branch"
+# The same one-identity boundary jamground-preview-build states for this key: IdentitiesOnly, so
+# ssh offers the key cut for this repository and nothing else it can find.
+as_build GIT_SSH_COMMAND="ssh -i $content_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+  git -C "$content" fetch --prune --tags --force origin \
+  || fail "could not fetch from the content repository"
+as_build git -C "$content" reset --hard "origin/$branch" \
+  || fail "could not move $content to origin/$branch"
+
+# No lock is taken around the fetch above: it touches only the CONTENT checkout, git takes its own
+# ref locks, and the preview path reads content solely through `git archive` of a private ref
+# (refs/jamground/previews/<N>), never through HEAD. The build lock that matters is the site
+# checkout's, and jamground-deploy takes it itself.
+exec env \
+  JAMGROUND_SITE_CHECKOUT="$site" \
+  JAMGROUND_CONTENT_CHECKOUT="$content" \
+  "$deploy_script"

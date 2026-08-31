@@ -22,6 +22,7 @@
     webhook_service_name: jamground-webhook
     webhook_consumer_service_name: jamground-hooks-consume
     webhook_consumer_timer_name: jamground-hooks-consume.timer
+    webhook_deploy_requests_dir: /var/lib/jamground/deploy-requests
   tasks:
     - name: Query the webhook unit state
       ansible.builtin.command: systemctl is-active {{ webhook_service_name }}
@@ -114,3 +115,48 @@
           {{ webhook_consumer_timer_name }} is {{ webhook_consumer_enabled.stdout }} /
           {{ webhook_consumer_active.stdout }} — a queue nothing drains fills silently, which
           looks exactly like a queue with nothing in it.
+
+    # ── The handover to the privileged side ───────────────────────────────────────────────────
+    #
+    # The consumer runs under ProtectSystem=strict, which makes the whole filesystem read-only
+    # except the paths named in ReadWritePaths. A missing entry there does not fail the unit or
+    # log anything unusual — the write just fails with EROFS, the merged job is quarantined, and
+    # the reason it was quarantined has nothing to do with the merge. Asserted against what
+    # systemd LOADED rather than the template, the same discipline verify/nginx.yml applies to the
+    # hooks vhost.
+    - name: Query the consumer unit's loaded environment and writable paths
+      ansible.builtin.command: >-
+        systemctl show {{ webhook_consumer_service_name }}.service
+        --property=Environment --property=ReadWritePaths
+      register: consume_show
+      check_mode: false
+      changed_when: false
+
+    - name: Assert the consumer can name and write the deploy-request queue
+      ansible.builtin.assert:
+        that:
+          - ('JAMGROUND_DEPLOY_REQUESTS=' ~ webhook_deploy_requests_dir) in consume_show.stdout
+          - webhook_deploy_requests_dir in consume_show.stdout
+        fail_msg: >-
+          {{ webhook_consumer_service_name }}.service does not both name
+          {{ webhook_deploy_requests_dir }} in its environment and hold it as a writable path:
+          {{ consume_show.stdout }}. Without the environment it writes somewhere else; without the
+          writable path the write fails with EROFS. Either way a merged pull request never reaches
+          production, and the only symptom is a quarantined delivery.
+
+    - name: Stat the deploy-request queue the consumer writes into
+      ansible.builtin.stat:
+        path: "{{ webhook_deploy_requests_dir }}"
+      register: deploy_requests_stat
+
+    - name: Assert the queue exists and belongs to the account that writes it
+      ansible.builtin.assert:
+        that:
+          - deploy_requests_stat.stat.exists
+          - deploy_requests_stat.stat.isdir
+          - deploy_requests_stat.stat.pw_name == 'jamground-build'
+        fail_msg: >-
+          {{ webhook_deploy_requests_dir }} is missing or not owned by jamground-build, which is
+          the account the consumer runs as — so the one thing this box lets an unprivileged
+          decision do is the thing it cannot do.
+

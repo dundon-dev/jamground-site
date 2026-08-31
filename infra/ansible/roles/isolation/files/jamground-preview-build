@@ -36,16 +36,21 @@
 #   3. It never moves the content checkout off main. The pull request's ref is fetched into a
 #      private ref namespace (refs/jamground/previews/<N>) and extracted with `git archive`, so
 #      HEAD, the working tree and the branch the production build reads are all untouched.
-#   4. Preview builds are serialised against each other with an flock, because Astro's caches
-#      (.astro/, node_modules/.astro, node_modules/.vite) live in the shared site checkout and two
-#      builds interleaving in them is a corrupt build, not a slow one.
+#   4. Builds in this checkout are serialised with an flock, because Astro's caches (.astro/,
+#      node_modules/.astro, node_modules/.vite) live in the shared site checkout and two builds
+#      interleaving in them is a corrupt build, not a slow one.
 #
-# What that leaves, stated plainly rather than papered over: a preview build and a PRODUCTION
-# build can still overlap, because jamground-deploy does not take this lock. That is safe for
-# everything a preview writes (its own work directory) and unsafe for exactly one thing — the
-# `npm ci` at the top of jamground-deploy. Today production deploys are operator-triggered, so the
-# overlap is a choice a human makes; the pass that automates them is where this lock has to become
-# a lock both scripts take. docs/ARCHITECTURE.md records that as the seam's next requirement.
+# POINT 4 USED TO SAY "preview builds are serialised against EACH OTHER", and the paragraph under
+# it spelled out what that left over: a preview build and a production build could still overlap,
+# because jamground-deploy did not take this lock. That was safe for everything a preview writes
+# (its own work directory) and unsafe for exactly one thing — the `npm ci` at the top of
+# jamground-deploy, which deletes node_modules before repopulating it. The paragraph closed by
+# saying the overlap was a choice a human made, and that the pass which automated production
+# deploys was where this had to become a lock both scripts take.
+#
+# That pass has landed. jamground-deploy takes this same lock, the lock moved off the previews
+# image onto the site checkout so both accounts can open it (see build_lock below), and
+# test/gates/shared-build-lock.test.mjs holds the two scripts to one path.
 # ------------------------------------------------------------------------------------------
 #
 # Paths below are literals rather than Ansible variables — a script systemd invokes with no
@@ -55,7 +60,6 @@
 set -euo pipefail
 
 previews_root=/srv/previews
-build_lock="$previews_root/.build.lock"
 content_key=/etc/jamground/deploy-keys/content_ed25519
 deploy_env=/etc/jamground/deploy.env
 
@@ -110,6 +114,15 @@ esac
 work_root="$JAMGROUND_SITE_CHECKOUT/.preview-work"
 work="$work_root/$pr"
 
+# The build lock, derived from the same checkout and for a related reason. It used to be
+# "$previews_root/.build.lock", which was fine while only preview builds took it — and became
+# wrong the moment jamground-deploy had to take it too (below, and see this file's header). A
+# production deploy has no business writing the previews image, that image does not exist before
+# this role converges, and /srv/jamground itself is NOT in the consumer's ReadWritePaths — so the
+# site checkout is the one inode both accounts can open, inside the systemd sandbox and out. Same
+# derivation as work_root, same argument, one line apart so they stay that way.
+build_lock="$JAMGROUND_SITE_CHECKOUT/.build.lock"
+
 fail() {
   echo "jamground-preview-build: $1" >&2
   rm -rf -- "$work"
@@ -136,14 +149,16 @@ fi
 # above, which wins over anything already in this shell.
 export JAMGROUND_INCLUDE_DRAFTS=1
 
-# One preview build at a time — see this file's header, point 4. The lock is held for the whole
-# build, released by the shell exiting however it exits, and waited for rather than skipped: a
-# second delivery that arrives mid-build is work that still has to happen. The wait is the same
-# 600s roles/isolation caps a preview build's own runtime at, so waiting can never outlast the
-# build being waited for.
+# One build at a time in this checkout — see this file's header, point 4. Not one PREVIEW build:
+# jamground-deploy takes the same lock now, so this also waits out a production deploy's `npm ci`
+# rather than having its dependency tree deleted underneath it. Held for the whole build, released
+# by the shell exiting however it exits, and waited for rather than skipped: a second delivery that
+# arrives mid-build is work that still has to happen. 900s, matching jamground-deploy's own wait,
+# because the thing being waited for may now be a full production build rather than another
+# preview.
 mkdir -p "$previews_root"
 exec 9>"$build_lock"
-flock -w 600 9 || fail "timed out waiting for $build_lock; another preview build is still running"
+flock -w 900 9 || fail "timed out waiting for $build_lock; a production deploy or another preview build is still using $JAMGROUND_SITE_CHECKOUT"
 
 echo "jamground-preview-build: preview $pr from $ref"
 rm -rf -- "$work"

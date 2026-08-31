@@ -1,7 +1,8 @@
 #!/bin/bash
 # {{ ansible_managed }}
 #
-# jamground-selfcheck — HTTP, disk headroom, certificate expiry and unit-liveness checks:
+# jamground-selfcheck — HTTP, disk headroom, certificate expiry, unit-liveness and
+# production-freshness checks:
 # monitoring and alerting on the production root, watching production availability and error
 # rates. Runs as jamground-build, unprivileged, fired every five minutes by
 # jamground-selfcheck.timer and once by hand in
@@ -37,6 +38,16 @@ disk_max_percent=90
 cert_min_days=14
 units=(nginx.service jamground-webhook.service)
 
+# The automatic-deploy chain, by the paths it leaves on disk. Literals, like every threshold above
+# and for the same reason — a script systemd invokes with no control node in the loop cannot
+# template itself at run time. Each is mirrored in another role's defaults by hand:
+# roles/deploy (deploy_requests_dir, deploy_current), roles/content_repos (the checkout), and the
+# two build scripts (the lock).
+deploy_requests=/var/lib/jamground/deploy-requests
+release_manifest=/srv/jamground/current/manifest.json
+content_checkout=/srv/jamground/repos/content
+build_lock=/srv/jamground/repos/site/.build.lock
+
 fail() {
   echo "jamground-selfcheck: $1" >&2
   exit 1
@@ -71,5 +82,56 @@ days_left=$(( (end_epoch - now_epoch) / 86400 ))
 for unit in "${units[@]}"; do
   systemctl is-active --quiet "$unit" || fail "${unit} is not active"
 done
+
+# --- The automatic production deploy ---------------------------------------------------------
+#
+# Three checks, because a merged pull request that never reaches the live site is invisible from
+# every other angle: the editor said "published" and meant it, GitHub shows the merge, the box's
+# units are all active, the certificate is valid, and the site serves — the previous release. That
+# is not hypothetical. It ran for three merges, and nothing here reported it.
+#
+# Every one is guarded on the thing it inspects existing, so a box mid-way through its first
+# converge — or one where roles/deploy has not run yet — skips rather than fails. A monitor that
+# goes red while the box is still being built teaches people to ignore it.
+
+# 1. A deploy that ran and failed. jamground-deploy never flips on a failure, so production is
+#    still serving correctly; what is wrong is that a merge is not on it and nobody was watching.
+if [ -f /etc/systemd/system/jamground-deploy-request.service ]; then
+  ! systemctl is-failed --quiet jamground-deploy-request.service \
+    || fail "jamground-deploy-request has failed; a merged change is not on the live site (journalctl -u jamground-deploy-request)"
+fi
+
+# 2. A deploy that never ran. A request sitting unclaimed means the .path unit is not firing —
+#    the silent failure mode a path unit has, and the one systemctl reports as green. Ten minutes
+#    is far longer than a claim takes and far shorter than anyone would notice by hand.
+if [ -d "$deploy_requests" ]; then
+  stale_requests=$(find "$deploy_requests" -maxdepth 1 -name '*.json' -mmin +10 | head -n1)
+  [ -z "$stale_requests" ] \
+    || fail "a deploy request has been unclaimed for over 10 minutes (${stale_requests}); jamground-deploy-request.path is not firing"
+fi
+
+# 3. The end state, which is the only one of the three that catches a merge lost some OTHER way —
+#    before the units existed, or by a request nothing ever wrote. Compares what `current` was
+#    built from against what the content checkout actually holds, which is the same comparison
+#    roles/content_repos makes at converge time; the difference is that this one runs every five
+#    minutes instead of when an operator happens to converge.
+#
+#    SKIPPED WHILE A BUILD HOLDS THE LOCK, because during a deploy the two are legitimately
+#    different. `flock -n` is the test: it fails immediately if anything holds it, and if nothing
+#    does it is held for the two commands below and released when the subshell exits. Running it
+#    in a subshell is what keeps fd 9 from staying open for the rest of this script.
+if [ -f "$release_manifest" ] && [ -d "$content_checkout/.git" ] && [ -f "$build_lock" ]; then
+  (
+    exec 9>"$build_lock" 2>/dev/null || exit 0
+    flock -n 9 || exit 0
+    deployed=$(sed -n 's/.*"contentSha":"\([^"]*\)".*/\1/p' "$release_manifest")
+    current=$(git -C "$content_checkout" rev-parse --short=7 HEAD 2>/dev/null)
+    [ -n "$deployed" ] && [ -n "$current" ] || exit 0
+    if [ "$deployed" != "$current" ]; then
+      echo "jamground-selfcheck: the live site was built from content ${deployed}, but the content checkout is at ${current} — a merge has not reached production" >&2
+      exit 1
+    fi
+  ) || exit 1
+fi
 
 echo "jamground-selfcheck: all checks passed"

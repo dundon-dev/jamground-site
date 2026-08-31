@@ -51,6 +51,16 @@ webhook_consumer_path_name: jamground-hooks-consume.path
 webhook_preview_slice: jamground-preview.slice
 webhook_previews_root: /srv/previews
 webhook_preview_build_script: /usr/local/bin/jamground-preview-build
+# Where the consumer writes a deploy REQUEST when a pull request merges. roles/deploy owns this
+# directory and the units that drain it; repeated here as a literal under the same convention as
+# the four paths above, and gated against roles/deploy's own copy — and against
+# DEFAULT_DEPLOY_REQUESTS_DIR in infra/hooks/lib/consumer.mjs — by
+# test/gates/deploy-request-path-unit.test.mjs.
+#
+# It is NOT under webhook_state_dir, even though this role's process is the only writer. The
+# READER is the `jamground` account, and /var/lib/jamground-hooks is jamground-build's own state
+# directory; a handover point belongs to neither side's private tree.
+webhook_deploy_requests_dir: /var/lib/jamground/deploy-requests
 webhook_site_checkout: /srv/jamground/repos/site
 webhook_content_checkout: /srv/jamground/repos/content
 

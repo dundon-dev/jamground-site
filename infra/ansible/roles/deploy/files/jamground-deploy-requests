@@ -1,0 +1,72 @@
+#!/bin/bash
+# jamground-deploy-requests — one pass over the deploy request queue, run as `jamground` by
+# jamground-deploy-request.service when jamground-deploy-request.path sees a request land.
+#
+# THE TWO SIDES, AND WHY THEY ARE TWO. The webhook queue consumer runs as jamground-build and holds
+# no sudo at all (roles/users). When a pull request MERGES it writes a small JSON file here and can
+# do nothing else — it can say "a merge happened", and it cannot say what to run. This script is
+# the other side, and it takes NOTHING from that file but its existence: the deploy it runs is a
+# fixed, no-argument wrapper. Nothing in a request reaches an argv. That asymmetry is the whole
+# privilege separation, and it is why this is a directory of files rather than a function call.
+#
+# The contents are for the journal and for whoever reads a quarantined request — which pull
+# request, and when. They are echoed, never parsed.
+set -euo pipefail
+
+requests=/var/lib/jamground/deploy-requests
+claimed=/var/lib/jamground/deploy-requests.claimed
+failed=/var/lib/jamground/deploy-requests.failed
+deploy_now=/usr/local/sbin/jamground-deploy-now
+
+shopt -s nullglob
+
+deployed=0
+
+# THREE PASSES, not one and not a `while true`. A merge landing DURING a deploy is drained by the
+# next pass rather than depending on how a .path unit re-arms after the service it started exits;
+# and the bound means a repository merging faster than it can build cannot hold this unit open
+# until TimeoutStartSec kills it mid-flip.
+for _pass in 1 2 3; do
+  # CLAIM FIRST, AND CLAIM EVERYTHING. Three outcomes are possible for a request while a deploy
+  # runs, and only one is acceptable. Left in $requests, it re-triggers the path unit the moment
+  # this unit deactivates — a deploy loop. Deleted before the deploy, it is a merge nobody gets
+  # back if the build then fails. Moved, it is neither: out of the watched directory, and still on
+  # disk. Anything already in $claimed is a previous run that died — a reboot, an OOM,
+  # TimeoutStartSec — and is claimed again here rather than left behind for ever.
+  for request in "$requests"/*.json; do
+    mv -- "$request" "$claimed/$(basename "$request")"
+  done
+
+  pending=("$claimed"/*.json)
+  if [ "${#pending[@]}" -eq 0 ]; then
+    [ "$deployed" -eq 0 ] && echo "jamground-deploy-requests: no requests; nothing to do"
+    exit 0
+  fi
+
+  # ONE deploy for N requests. jamground-deploy always builds the content checkout's HEAD, so three
+  # merges landing inside a minute are one build that ends at the same commit — not three builds
+  # queueing for the same checkout behind the same lock.
+  for request in "${pending[@]}"; do
+    echo "jamground-deploy-requests: $(basename "$request") $(cat "$request")"
+  done
+
+  if ! sudo -n "$deploy_now"; then
+    # jamground-deploy has already decided what a failed deploy means: it never flips, so `current`
+    # is untouched and production keeps serving the previous release. What is added here is being
+    # NOTICED, because nobody is watching an automatic deploy. The requests move to $failed intact
+    # and named, this exits non-zero so `systemctl status` keeps saying so, and jamground-selfcheck
+    # raises the box's existing alarm on both. There is deliberately NO retry: a content defect
+    # that fails the build would otherwise rebuild every time a request landed, for ever, on a box
+    # that is also serving production.
+    for request in "${pending[@]}"; do
+      mv -- "$request" "$failed/$(basename "$request")" || true
+    done
+    echo "jamground-deploy-requests: the deploy failed; ${#pending[@]} request(s) moved to $failed." \
+      "current is unchanged and production is still serving the previous release." >&2
+    exit 1
+  fi
+
+  rm -f -- "${pending[@]}"
+  deployed=$(( deployed + ${#pending[@]} ))
+  echo "jamground-deploy-requests: deployed for ${#pending[@]} merged pull request(s)"
+done

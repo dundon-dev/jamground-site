@@ -1,0 +1,49 @@
+# {{ ansible_managed }}
+#
+# One pass over the deploy request queue: claim every request, deploy once, delete them if the
+# deploy succeeded and move them to {{ deploy_requests_failed_dir }} if it did not. Type=oneshot,
+# not a daemon, for the same reasons jamground-hooks-consume gives — the work is bursty, a crash is
+# a missed run rather than a wedged process, and the exit code then means something that
+# `systemctl status` keeps saying.
+#
+# User={{ deploy_orchestrator_user }} — the orchestrator account, the one holding this box's fixed
+# no-argument sudo wrappers (roles/users). Not jamground-build, which holds no sudo and could not
+# flip. Not root either: the privileged step this box performs is named in /etc/sudoers.d/jamground
+# and stays named there, where verify/users.yml can read it back.
+#
+# THE SLICE, AND NOT jamground-production-build.service. That unit is the production resource
+# envelope and stays one: it is User=jamground-build (it cannot flip) and PrivateNetwork=yes (this
+# path must reach github.com to fetch the merge), which is the same pair of reasons the queue
+# consumer invokes jamground-preview-build directly rather than starting the templated instance
+# unit. Joining roles/isolation's production slice is what actually gives an automatic deploy its
+# CPU weight against a preview build running beside it.
+[Unit]
+Description=jamground production deploy — claim every merge request and deploy once
+After=network.target
+# A claim that cannot be made leaves the request where it is, which re-triggers the path unit the
+# moment this unit deactivates. Five starts in five minutes and systemd stops, in `failed`, loudly
+# — rather than spinning a deploy loop on a box that is also serving production.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+Slice={{ deploy_production_slice }}
+User={{ deploy_orchestrator_user }}
+Group={{ deploy_orchestrator_user }}
+PrivateTmp=yes
+# NoNewPrivileges=yes IS DELIBERATELY ABSENT, and this is not an oversight — every other unit in
+# this tree sets it. sudo is setuid root, and NoNewPrivileges makes a setuid binary ineffective:
+# the deploy would die with "sudo: effective uid is not 0" before it did anything. Setting it here
+# would not narrow the grant roles/users makes; it would only break it.
+# ProtectSystem= is absent for a related reason: the build writes the site checkout, the release
+# tree is created under /srv/jamground, and the flip renames /srv/jamground/current — a namespace
+# this unit erected would have to be punched through by every privileged child of it.
+#
+# TIMEOUTSTARTSEC IS LOAD-BEARING. A Type=oneshot's ExecStart is bounded by TimeoutStartSec, whose
+# DEFAULT IS 90 SECONDS. `npm ci && npm run build` on this box is minutes, so the default would
+# kill every automatic deploy part-way through, leave `current` untouched, and report a failure no
+# line of the script could explain. This value also has to cover the shared build lock's own 900s
+# wait, since a deploy may be queued behind a preview build before it starts.
+TimeoutStartSec={{ deploy_request_timeout_sec }}
+ExecStart={{ deploy_request_runner_path }}

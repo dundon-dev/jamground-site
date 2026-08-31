@@ -15,12 +15,15 @@
 # jamground-preview-build@<N>.service, which would need an argument-taking sudo grant this box
 # deliberately does not have (roles/users).
 #
-# ProtectSystem=strict with four explicit ReadWritePaths. The previews root is what it publishes
+# ProtectSystem=strict with five explicit ReadWritePaths. The previews root is what it publishes
 # into; the two checkouts are read for the build, and are writable because git writes the fetched
-# ref and Astro writes its caches inside the site checkout. Each of the three is `-`-prefixed:
-# roles/isolation and roles/content_repos converge AFTER this role, so on a first converge those
-# paths do not exist yet, and an unprefixed ReadWritePaths naming a missing path fails the unit
-# outright rather than starting it.
+# ref and Astro writes its caches inside the site checkout — and, since the build lock moved onto
+# the site checkout, because that is the one inode this process's children share with a production
+# deploy. The deploy-requests directory is where a merged pull request's request is written; a
+# missing ReadWritePath there would fail the write with EROFS, on the automatic path, silently.
+# Each of the four is `-`-prefixed: roles/isolation, roles/content_repos and roles/deploy converge
+# AFTER this role, so on a first converge those paths do not exist yet, and an unprefixed
+# ReadWritePaths naming a missing path fails the unit outright rather than starting it.
 [Unit]
 Description=jamground webhook queue consumer — one pass over the queue
 After=network.target
@@ -41,6 +44,7 @@ Environment=WEBHOOK_QUEUE_DIR={{ webhook_queue_dir }}
 Environment=WEBHOOK_FAILED_DIR={{ webhook_failed_dir }}
 Environment=WEBHOOK_LOCKS_DIR={{ webhook_locks_dir }}
 Environment=JAMGROUND_PREVIEWS_ROOT={{ webhook_previews_root }}
+Environment=JAMGROUND_DEPLOY_REQUESTS={{ webhook_deploy_requests_dir }}
 Environment=JAMGROUND_PREVIEW_BUILD={{ webhook_preview_build_script }}
 Environment=JAMGROUND_SITE_CHECKOUT={{ webhook_site_checkout }}
 Environment=JAMGROUND_CONTENT_CHECKOUT={{ webhook_content_checkout }}
@@ -50,6 +54,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 ReadWritePaths={{ webhook_state_dir }}
+ReadWritePaths=-{{ webhook_deploy_requests_dir }}
 ReadWritePaths=-{{ webhook_previews_root }}
 ReadWritePaths=-{{ webhook_site_checkout }}
 ReadWritePaths=-{{ webhook_content_checkout }}

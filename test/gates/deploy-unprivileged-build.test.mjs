@@ -81,11 +81,35 @@ function runDeployAs({ uid, user }) {
   const npmLog = join(box, 'npm.log');
   const sudoLog = join(box, 'sudo.log');
   const mkdirLog = join(box, 'mkdir.log');
+  const flockLog = join(box, 'flock.log');
+  const orderLog = join(box, 'order.log');
 
   stub(bin, 'id', `case "$1" in\n  -u) echo ${uid} ;;\n  *) echo ${user} ;;\nesac\n`);
   stub(bin, 'git', 'echo abc1234\n');
   stub(bin, 'mkdir', `echo "argv=$*" >> ${JSON.stringify(mkdirLog)}\n`);
   stub(bin, 'rm', `echo "argv=$*" >> ${JSON.stringify(join(box, 'rm.log'))}\n`);
+
+  // The script re-execs itself under flock to take the build lock it now shares with
+  // jamground-preview-build. Stubbed rather than real for two reasons: macOS has no flock(1) at
+  // all, and the lock path is inside a checkout that on a developer machine is this temp
+  // directory rather than the box's. Faithful in the two respects the script depends on — the
+  // options are consumed and the rest is exec'd — so what runs after it is the script's own
+  // second pass, not a description of one.
+  stub(bin, 'flock', [
+    'opts=',
+    'while [ $# -gt 0 ]; do',
+    '  case "$1" in',
+    '    -w|-E) opts="$opts $1 $2"; shift 2 ;;',
+    '    -*) opts="$opts $1"; shift ;;',
+    '    *) break ;;',
+    '  esac',
+    'done',
+    `echo "opts=$opts lock=$1" >> ${JSON.stringify(flockLog)}`,
+    `echo "flock" >> ${JSON.stringify(orderLog)}`,
+    'shift',
+    'exec "$@"',
+    '',
+  ].join('\n'));
 
   // Faithful in the one respect that matters: real sudo runs the command in a reset environment,
   // so nothing this script exported before the drop arrives on the far side of it. HOME is set
@@ -116,6 +140,7 @@ function runDeployAs({ uid, user }) {
     '  echo "home=${HOME-<unset>}"',
     '  echo "cwd=$PWD"',
     `} >> ${JSON.stringify(npmLog)}`,
+    `echo "npm $1" >> ${JSON.stringify(orderLog)}`,
     'case "$1" in',
     '  ci) exit 0 ;;',
     '  *) exit 1 ;;',
@@ -126,6 +151,14 @@ function runDeployAs({ uid, user }) {
   const result = spawnSync('bash', [SCRIPT], {
     encoding: 'utf8',
     cwd: box,
+    // BOUNDED, because the failure this gate now watches for can HANG rather than fail. The script
+    // re-execs itself under flock and stops only because JAMGROUND_DEPLOY_LOCKED is set on the way
+    // in; remove that guard and it re-execs for ever. Unbounded, this gate would then sit until
+    // whatever runs it gives up — a gate that hangs reports nothing, which is worse than one that
+    // is merely absent. 30s is ~20x the honest run measured here, so it cannot fire on a slow
+    // machine.
+    timeout: 30_000,
+    killSignal: 'SIGKILL',
     env: {
       PATH: `${bin}:${process.env.PATH}`,
       HOME: rootHome,
@@ -142,7 +175,13 @@ function runDeployAs({ uid, user }) {
     }),
   ));
 
-  return { result, box, site, content, rootHome, npmCalls, sudo: readIfAny(sudoLog), mkdir: readIfAny(mkdirLog) };
+  const flock = readIfAny(flockLog).trim().split('\n').filter(Boolean);
+  const order = readIfAny(orderLog).trim().split('\n').filter(Boolean);
+
+  return {
+    result, box, site, content, rootHome, npmCalls, flock, order,
+    sudo: readIfAny(sudoLog), mkdir: readIfAny(mkdirLog),
+  };
 }
 
 test('invoked as root, the build runs as the unprivileged account and the environment survives', () => {
@@ -193,7 +232,7 @@ test('invoked as the build account already, it does not drop again', () => {
   assert.equal(run.sudo, '', `${relative(ROOT, SCRIPT)} tried to drop privileges while already `
     + `running as ${BUILD_USER}: sudo saw ${JSON.stringify(run.sudo)}. Neither ${BUILD_USER} nor `
     + 'jamground holds a `sudo -u` grant — jamground-build holds no sudo at all and jamground holds '
-    + 'exactly two no-argument entries — so a second drop cannot succeed, and it is not needed: '
+    + 'exactly three no-argument entries — so a second drop cannot succeed, and it is not needed: '
     + 'the build is already running without privilege.');
   for (const call of run.npmCalls) {
     assert.equal(call.contentDir, run.content,
@@ -258,4 +297,47 @@ test('the converge repairs ownership of the build outputs before it builds', () 
       + 'checkout by both jamground-deploy and jamground-preview-build, and both run as '
       + `${BUILD_USER}; one left owned by root is one the preview build dies on.`);
   }
+});
+
+/* Invariant: the deploy takes the shared build lock, once, before it deletes the dependency tree.
+ *
+ * WHY IT IS PART OF *THIS* GATE. The two facts are one fact. `npm ci` deletes node_modules in the
+ * SHARED site checkout, and the account that is hurt by that is jamground-build — the same account
+ * this file exists to keep the build running as, mid-flight in a preview build that this deploy
+ * knows nothing about. Before the lock, that overlap was a choice an operator made by running the
+ * deploy at a bad moment; a merged pull request now makes it on its own, at a moment nobody picks.
+ *
+ * The re-exec is also the thing most likely to go wrong quietly. Without the JAMGROUND_DEPLOY_LOCKED
+ * guard the script re-execs forever, taking the lock recursively and never reaching a build — which
+ * from outside looks like a deploy that hangs, not one that is broken.
+ */
+test('the deploy takes the shared build lock exactly once, before npm ci', () => {
+  const run = runDeployAs({ uid: 0, user: 'root' });
+
+  assert.notEqual(run.result.signal, 'SIGKILL',
+    'the script did not terminate and was killed on the harness timeout. That is the shape of a '
+    + 'lost JAMGROUND_DEPLOY_LOCKED guard: the flock re-exec has nothing to stop it, so the script '
+    + 're-execs itself for ever and never reaches a build. From the outside it reads as a deploy '
+    + 'that hangs rather than one that is broken.');
+
+  assert.equal(run.flock.length, 1,
+    `flock ran ${run.flock.length} times, expected exactly 1. More than one means the `
+    + 'JAMGROUND_DEPLOY_LOCKED guard is not stopping the re-exec, and the script never reaches a '
+    + 'build; zero means it is not taking the lock at all and a preview build can have its '
+    + 'dependency tree deleted underneath it.');
+
+  assert.match(run.flock[0], /lock=.*\/\.build\.lock$/,
+    `flock was given ${run.flock[0]}. The lock must be "$JAMGROUND_SITE_CHECKOUT/.build.lock" — `
+    + 'the same path jamground-preview-build takes, which test/gates/shared-build-lock.test.mjs '
+    + 'holds the two scripts to.');
+  assert.ok(run.flock[0].includes(`lock=${run.site}/`),
+    `the lock is at ${run.flock[0]}, not under the site checkout ${run.site}. Every other location `
+    + 'is unopenable by one of the two accounts that must take it — the previews image is a '
+    + 'separate filesystem, and /srv/jamground is not in the queue consumer\'s ReadWritePaths.');
+
+  assert.equal(run.order[0], 'flock',
+    `the first thing the script reached was ${run.order[0]}, not flock. The lock exists for the `
+    + '`npm ci` below it; taken afterwards it protects nothing.');
+  assert.ok(run.order.indexOf('flock') < run.order.indexOf('npm ci'),
+    `observed order was ${run.order.join(' -> ')}`);
 });

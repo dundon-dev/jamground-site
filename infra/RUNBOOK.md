@@ -165,7 +165,7 @@ name.
 Run it **as root**, which is not the same as running the build as root: the script performs the two
 halves at two privilege levels itself, dropping to `jamground-build` for `npm ci && npm run build`
 and keeping only the symlink flip and the nginx reload privileged. Root is the one account here
-that can make that drop — `jamground-build` holds no sudo at all and `jamground` holds exactly two
+that can make that drop — `jamground-build` holds no sudo at all and `jamground` holds exactly three
 no-argument entries — so running the script as either of them instead builds as that account and,
 in `jamground`'s case, leaves the shared site checkout owned by an account the preview build cannot
 write.
@@ -186,13 +186,15 @@ untouched; nothing partial is ever served.
 
 A pull request against the content repository builds its own staging site, with nothing to run by
 hand: GitHub POSTs to `https://hooks.<domain>/`, the receiver queues the delivery, and
-`jamground-hooks-consume.timer` picks it up within about a minute and runs the build. The result
+`jamground-hooks-consume.path` starts the consumer the moment the job lands — the timer beside it
+is a five-minute backstop for a delivery arriving mid-build, not the mechanism — and it runs the
+build. The result
 is at `https://pr-<N>.preview.<domain>/`, and closing the pull request removes it.
 
 To build one by hand — the same script, same arguments the consumer passes:
 
 ```sh
-sudo -u jamground-build \
+sudo -u jamground-build env \
   JAMGROUND_SITE_CHECKOUT=/srv/jamground/repos/site \
   JAMGROUND_CONTENT_CHECKOUT=/srv/jamground/repos/content \
   /usr/local/bin/jamground-preview-build 42 refs/pull/42/head
@@ -208,6 +210,51 @@ ls /var/lib/jamground-hooks/failed   # tried, could not be handled — the deliv
 
 A job in `failed/` also makes the last consumer run exit non-zero, so `systemctl status
 jamground-hooks-consume` keeps saying so. Re-run one by moving it back into `queue/`.
+
+## Deploying automatically
+
+A merged pull request deploys production on its own; the section above is now the manual path, for
+a site change or a repair rather than for content.
+
+The chain is short and split across two accounts on purpose. The webhook queue consumer
+(`jamground-build`, no sudo at all) turns a `pull_request.closed` + `merged` delivery into one JSON
+file in `/var/lib/jamground/deploy-requests/`. `jamground-deploy-request.path` sees it and starts
+`jamground-deploy-request.service`, which runs as `jamground` and takes **nothing from that file but
+its existence**: it claims every request, calls `sudo jamground-deploy-now` — a fixed, no-argument
+wrapper that refreshes the content checkout and runs `jamground-deploy` — and then deletes the
+requests it claimed. What an unprivileged process can say is "a merge happened"; what it cannot say
+is what to run.
+
+```sh
+journalctl -u jamground-deploy-request --since -1h
+ls /var/lib/jamground/deploy-requests          # waiting to be claimed
+ls /var/lib/jamground/deploy-requests.claimed  # in flight, or left by a run that died
+ls /var/lib/jamground/deploy-requests.failed   # the deploy failed; the request is intact
+```
+
+A failed deploy never flips, so production keeps serving the previous release. The requests move to
+`failed/` naming the pull request, the unit stays in `failed` so `systemctl status` keeps saying
+so, and `jamground-selfcheck` raises the box's existing alarm on both that and a request left
+unclaimed for ten minutes. **There is no automatic retry** — a content defect that fails the build
+would otherwise rebuild for ever. Re-run one by moving it back:
+
+```sh
+sudo -u jamground mv /var/lib/jamground/deploy-requests.failed/<name> \
+                     /var/lib/jamground/deploy-requests/
+```
+
+To exercise the chain without a merge, write a request as the account that really writes them:
+
+```sh
+sudo -u jamground-build install -m 0644 /dev/stdin \
+  /var/lib/jamground/deploy-requests/$(date +%s)000-smoke.json <<<'{"reason":"smoke test"}'
+journalctl -fu jamground-deploy-request
+```
+
+**One lock covers every build in the site checkout.** `jamground-deploy` and
+`jamground-preview-build` both `flock` `/srv/jamground/repos/site/.build.lock`, because the deploy's
+`npm ci` deletes the `node_modules` a preview build may be using. Each waits up to 900s. A deploy
+that timed out waiting says so and leaves `current` untouched.
 
 ## Rollback
 

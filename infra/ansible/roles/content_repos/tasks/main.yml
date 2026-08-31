@@ -221,6 +221,29 @@
 # which skipped the build and reported converged — a false green, the worst available shape
 # here. Comparing the manifest to what is actually on disk right now survives every later
 # content or site change and needs nothing reset by hand.
+# THE SHARED BUILD LOCK, CREATED BEFORE ANYTHING CAN TAKE IT.
+#
+# jamground-deploy and jamground-preview-build both flock "$JAMGROUND_SITE_CHECKOUT/.build.lock"
+# now, and neither creates it deliberately — `flock` and `exec 9>` each create it on first use, as
+# whoever got there first. That is the whole problem: the first taker is very often root (this
+# role's own deploy below, or an operator following the RUNBOOK), which leaves a root-owned file
+# that jamground-build cannot open for write — and every preview build from then on dies with
+# EACCES on the lock rather than on anything to do with the preview. So the converge creates it,
+# owned by the account that cannot create it itself, before the task below can.
+#
+# `modification_time`/`access_time: preserve` is what makes `state: touch` idempotent; without
+# them this task reports changed on every converge, which is how a converge stops meaning
+# anything.
+- name: Ensure the shared build lock exists, owned by the account that builds
+  ansible.builtin.file:
+    path: "{{ content_repos_site_checkout }}/.build.lock"
+    state: touch
+    owner: jamground-build
+    group: jamground-build
+    mode: '0644'
+    modification_time: preserve
+    access_time: preserve
+
 - name: Read the current release's manifest, to tell a real build from a stale one
   ansible.builtin.slurp:
     path: "{{ content_repos_deploy_current }}/manifest.json"
@@ -229,7 +252,7 @@
 # AS ROOT, EXPLICITLY, and not as jamground-build. The two halves of a deploy need two different
 # privilege levels and jamground-deploy separates them itself: it drops to jamground-build for the
 # build (`sudo -n -H -u`, which only root can do — jamground-build holds no sudo at all and
-# jamground holds exactly two no-argument entries) and calls the two privileged wrappers directly.
+# jamground holds exactly three no-argument entries) and calls the two privileged wrappers directly.
 # Running this task as jamground-build instead would keep the build unprivileged and then be unable
 # to flip; running it as jamground would build as jamground and leave the same class of
 # wrongly-owned artefacts this role now repairs above. Written out rather than inherited from the

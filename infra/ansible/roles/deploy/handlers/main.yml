@@ -1,0 +1,6 @@
+---
+# Same handler roles/webhook, roles/isolation and roles/selfcheck all declare: a unit file dropped
+# without a daemon-reload is a unit systemd has not read.
+- name: reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
