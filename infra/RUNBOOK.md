@@ -112,6 +112,22 @@ cd infra/ansible
 ansible-playbook site.yml
 ```
 
+Each role is tagged with its own name, so a change confined to one part of the box can converge
+that part alone:
+
+```sh
+ansible-playbook site.yml --tags editor_shell   # ship the editor bundle, nothing else
+ansible-playbook site.yml --list-tags           # the twelve names
+```
+
+That is worth reaching for when the alternative is disproportionate: a change under `editor/`
+is shipped entirely by `editor_shell`, and a full converge to deliver it would also run certbot
+and have `content_repos` pull, rebuild and re-flip the site for a build whose output did not
+change. **Tags select; they do not satisfy dependencies** — a tagged run assumes everything the
+role converges after is already in place and does not check, so the ordering below still governs
+a first converge, and an unqualified `site.yml` remains the operation to reach for whenever that
+assumption is not safe.
+
 Twelve roles converge in order, each depending only on what already ran: `users` (the two
 service accounts and the no-argument sudo grant), `bot_token`, `toolchain` (pinned Node),
 `nginx`, `certificates`, `broker` (the OAuth token exchange), `editor_shell` (the editor's

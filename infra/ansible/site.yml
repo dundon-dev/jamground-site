@@ -3,34 +3,59 @@
 - name: Configure jamground
   hosts: jamground
   gather_facts: true
+  # Every role carries its own name as a tag, so one part of the box can be converged without
+  # the other eleven — `--tags editor_shell` ships the editor bundle without running certbot or
+  # rebuilding and re-flipping the site, which a change to editor/ has no reason to do.
+  #
+  # TAGS SELECT, THEY DO NOT SATISFY DEPENDENCIES. The comments below still describe what each
+  # role converges after and why; a tagged run assumes those already converged and does not
+  # check. `site.yml` with no tags remains the whole operation and the one to reach for when
+  # that assumption is not safe to make.
+  #
+  # Handlers are deliberately left untagged. A handler notified across a role boundary —
+  # editor_shell's `reload nginx`, which roles/nginx declares — still runs under a tag
+  # selection that excludes the role declaring it (verified against core 2.20.1), so the edit
+  # vhost is reloaded by `--tags editor_shell` as it is by a full converge.
   roles:
-    - users
-    - bot_token
-    - toolchain
-    - nginx
-    - certificates
+    - role: users
+      tags: [users]
+    - role: bot_token
+      tags: [bot_token]
+    - role: toolchain
+      tags: [toolchain]
+    - role: nginx
+      tags: [nginx]
+    - role: certificates
+      tags: [certificates]
     # The auth broker — a stateless systemd unit answering `POST /token` on
     # localhost. Converges before editor_shell: its edit.conf.j2 proxies the public path to
     # broker_port, and a role's defaults must already be loaded when that template renders.
-    - broker
+    - role: broker
+      tags: [broker]
     # A conf.d drop-in for the edit vhost — converges after both: it reuses the
     # wildcard certificate roles/certificates issues and relies on nginx.conf's
     # `include conf.d/*.conf`, which roles/nginx already ships.
-    - editor_shell
+    - role: editor_shell
+      tags: [editor_shell]
     # No CONVERGE-time dependency on deploy/content_repos/isolation — the receiver and the queue
     # consumer only need the build account (users) and node (toolchain), both already converged.
     # The consumer does need the previews root and the two checkouts to RUN, and those arrive with
     # roles further down this list; it is written to refuse the whole pass until they exist rather
     # than quarantine the jobs it finds in the meantime.
-    - webhook
-    - deploy
+    - role: webhook
+      tags: [webhook]
+    - role: deploy
+      tags: [deploy]
     # Depends on `deploy` having already shipped jamground-deploy and the seed release — this
     # role performs the first real pull, build and flip through that mechanism.
-    - content_repos
+    - role: content_repos
+      tags: [content_repos]
     # No dependency on any role above — only needs the build account (users) already converged.
     # Ships the preview build script and the two slices; the preview per-build unit now runs that
     # script, and the production one is still a bare envelope around no command.
-    - isolation
+    - role: isolation
+      tags: [isolation]
     # Converges LAST: its checks are live, against whatever the box is actually
     # serving, so nginx, certificates, webhook and content_repos must already have run.
-    - selfcheck
+    - role: selfcheck
+      tags: [selfcheck]
