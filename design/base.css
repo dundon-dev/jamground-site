@@ -109,9 +109,12 @@ a:hover { color: var(--jp-color-link-hover); }
 .site-blocks > :first-child { margin-block-start: 0; }
 
 /* --- 3. Page chrome --------------------------------------------------------------- */
+/* Tinted, not white. The chrome and the page were the same surface, so the header read as
+ * nothing at all — the single cheapest change that stops the site looking like an unstyled
+ * document. bg-subtle, so it stays a token decision rather than a colour written here. */
 .site-header {
   border-block-end: 1px solid var(--jp-color-border);
-  background: var(--jp-color-bg);
+  background: var(--jp-color-bg-subtle);
 }
 .site-header__inner {
   display: flex;
@@ -121,10 +124,12 @@ a:hover { color: var(--jp-color-link-hover); }
   min-height: 4rem;
   flex-wrap: wrap;
 }
+/* The one place the accent belongs in the chrome. Every other chrome colour stays neutral on
+ * purpose: an accent used everywhere stops being an accent. */
 .site-brand {
   font-weight: var(--jp-weight-bold);
   font-size: var(--jp-text-lg);
-  color: var(--jp-color-heading);
+  color: var(--jp-color-link);
   text-decoration: none;
   letter-spacing: var(--jp-tracking-tight);
 }
@@ -141,7 +146,8 @@ a:hover { color: var(--jp-color-link-hover); }
 .site-nav__link:hover { color: var(--jp-color-text); }
 /* Styled off the attribute, not a class: the accessible signal and the visual one cannot
  * then drift apart. */
-.site-nav__link[aria-current="page"] { color: var(--jp-color-heading); }
+/* The current page, in the accent — colour carrying meaning rather than decoration. */
+.site-nav__link[aria-current="page"] { color: var(--jp-color-link); }
 
 .site-nav__sublist { display: flex; gap: var(--jp-space-4); padding-inline-start: var(--jp-space-4); }
 @media (min-width: 48rem) {

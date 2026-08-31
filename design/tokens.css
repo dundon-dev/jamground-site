@@ -22,17 +22,30 @@
   --jp-color-neutral-800: #232932;
   --jp-color-neutral-900: #14181f;
 
-  /* One accent. Not two. */
-  --jp-color-accent:        #2f57d4;
-  --jp-color-accent-strong: #1f3ca3;
-  --jp-color-accent-soft:   #eef1fd;
+  /* One accent. Not two. Indigo rather than the earlier royal blue: the same role, a little
+   * more contemporary, and measurably better contrast — 6.29:1 on white against 6.11:1, which
+   * matters because this one value is the link colour, the button fill AND the fill white text
+   * sits on. */
+  --jp-color-accent:        #4f46e5;
+  --jp-color-accent-strong: #4338ca;
+  --jp-color-accent-soft:   #eef2ff;
 
   /* Semantic layer — the only colour tokens anything else may name. */
   --jp-color-bg:            var(--jp-color-neutral-0);
   --jp-color-bg-subtle:     var(--jp-color-neutral-50);
   --jp-color-surface:       var(--jp-color-neutral-0);
   --jp-color-text:          var(--jp-color-neutral-800);
-  --jp-color-text-muted:    var(--jp-color-neutral-500);
+  /* neutral-600, not -500, and this is a contrast fix rather than a preference.
+   *
+   * Muted text sits on three light surfaces: white, the newly tinted header, and the accent
+   * panel cta.css has always drawn (its `background: --jp-color-accent-bg` under a
+   * `color: --jp-color-text-muted` body). Measured against those three, neutral-500 was
+   * 4.72 / 4.48 / 4.22 — two of them under AA's 4.5:1, and the cta's body copy is not large
+   * text, so it gets no exemption. That second failure predates the header tint by some time;
+   * tinting the header is what made it two rather than one.
+   *
+   * neutral-600 is 7.64 / 7.25 / 6.83, so anything tinted added later has headroom. */
+  --jp-color-text-muted:    var(--jp-color-neutral-600);
   --jp-color-heading:       var(--jp-color-neutral-900);
   --jp-color-border:        var(--jp-color-neutral-200);
   --jp-color-border-strong: var(--jp-color-neutral-300);
@@ -104,8 +117,11 @@
     --jp-color-heading:       var(--jp-color-neutral-0);
     --jp-color-border:        var(--jp-color-neutral-700);
     --jp-color-border-strong: var(--jp-color-neutral-600);
-    --jp-color-link:          #8ea6f5;
-    --jp-color-link-hover:    #b4c4fa;
+    /* The accent's light-scheme counterpart: indigo-300/-200, 8.93:1 and 11.93:1 on the dark
+     * background. The accent itself is far too dark to read on it, which is why this pair is
+     * stated here rather than aliased. */
+    --jp-color-link:          #a5b4fc;
+    --jp-color-link-hover:    #c7d2fe;
     --jp-color-accent-bg:     var(--jp-color-neutral-700);
     --jp-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
     --jp-shadow-md: 0 6px 24px rgb(0 0 0 / 0.45);
