@@ -100,9 +100,12 @@ test('NoNewPrivileges is absent, because sudo is setuid', () => {
 test('TimeoutStartSec is set, and is longer than the build plus the lock wait', () => {
   const templated = value(serviceDirectives, 'TimeoutStartSec');
   assert.equal(templated, '{{ deploy_request_timeout_sec }}',
-    'a Type=oneshot with no TimeoutStartSec gets systemd\'s 90-second default, which kills every '
-    + 'automatic deploy part-way through `npm ci && npm run build` and reports it as the script '
-    + 'having failed');
+    'a Type=oneshot with no TimeoutStartSec is UNBOUNDED — systemd.service(5) disables the start '
+    + 'timeout for oneshot rather than applying DefaultTimeoutStartSec, and the box confirms it '
+    + '(jamground-hooks-consume.service loads as TimeoutStartUSec=infinity). That is the wrong '
+    + 'default here because of the lock: a deploy holds the shared build lock from before its '
+    + '`npm ci` until after the flip, so one that wedges stops every preview build on the box, '
+    + 'indefinitely, with nothing timing out to say so.');
   const seconds = deployDefaults.deploy_request_timeout_sec;
   assert.ok(Number.isInteger(seconds) && seconds > 900,
     `deploy_request_timeout_sec is ${seconds}. It must exceed the shared build lock's own 900s `

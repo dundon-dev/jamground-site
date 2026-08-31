@@ -231,20 +231,21 @@
           - ('User=' ~ deploy_orchestrator_user) in deploy_request_show.stdout_lines
           - "'NoNewPrivileges=no' in deploy_request_show.stdout_lines"
           - ('Slice=' ~ deploy_production_slice) in deploy_request_show.stdout_lines
-          - deploy_request_timeout_loaded | int > 90
+          # NOT a duration comparison. systemctl prints this property human-readably — "1h", not a
+          # microsecond count — so the arithmetic this used to do parsed "1h" to 1 and failed
+          # against a correctly configured unit. What is worth asserting is the property itself:
+          # BOUNDED rather than unbounded. Type=oneshot disables the start timeout by default
+          # (systemd.service(5)), so `infinity` here is exactly what an omitted setting looks
+          # like, and the offline gate holds the configured value above the lock's 900s wait.
+          - "'TimeoutStartUSec=infinity' not in deploy_request_show.stdout_lines"
         fail_msg: >-
           {{ deploy_request_service_name }}.service is loaded as
           {{ deploy_request_show.stdout_lines | join(', ') }}. It must run as
           {{ deploy_orchestrator_user }} (the account holding the wrappers), with
           NoNewPrivileges=no (sudo is setuid; yes breaks the grant rather than narrowing it), in
-          {{ deploy_production_slice }}, and with a start timeout longer than 90 seconds —
-          systemd's oneshot default, which kills every deploy part-way through npm run build.
-      vars:
-        deploy_request_timeout_loaded: >-
-          {{ ((deploy_request_show.stdout_lines
-               | select('match', '^TimeoutStartUSec=') | first | default('TimeoutStartUSec=0'))
-              | regex_replace('^TimeoutStartUSec=', '') | regex_replace('[^0-9]', '') | int)
-             // 1000000 }}
+          {{ deploy_production_slice }}, and with a bounded start timeout. A oneshot with no
+          TimeoutStartSec is unbounded, and a deploy that wedges holds the shared build lock —
+          stopping every preview build on this box until someone notices by hand.
 
     - name: Query the deploy-request path unit's state
       ansible.builtin.command: systemctl is-enabled {{ deploy_request_path_name }}

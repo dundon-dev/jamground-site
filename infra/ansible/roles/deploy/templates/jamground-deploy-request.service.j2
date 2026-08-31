@@ -40,10 +40,17 @@ PrivateTmp=yes
 # tree is created under /srv/jamground, and the flip renames /srv/jamground/current — a namespace
 # this unit erected would have to be punched through by every privileged child of it.
 #
-# TIMEOUTSTARTSEC IS LOAD-BEARING. A Type=oneshot's ExecStart is bounded by TimeoutStartSec, whose
-# DEFAULT IS 90 SECONDS. `npm ci && npm run build` on this box is minutes, so the default would
-# kill every automatic deploy part-way through, leave `current` untouched, and report a failure no
-# line of the script could explain. This value also has to cover the shared build lock's own 900s
-# wait, since a deploy may be queued behind a preview build before it starts.
+# TIMEOUTSTARTSEC ADDS A BOUND WHERE THERE WAS NONE, AND THAT IS THE POINT — it is not rescuing
+# this unit from the manager's 90-second default. systemd.service(5): TimeoutStartSec defaults to
+# DefaultTimeoutStartSec= "except when Type=oneshot is used, in which case the timeout is disabled
+# by default". Measured on this box: jamground-hooks-consume.service, also Type=oneshot and
+# carrying no TimeoutStartSec, loads as TimeoutStartUSec=infinity.
+#
+# Unbounded is the wrong default HERE, and only here, because of the lock. A deploy holds
+# $JAMGROUND_SITE_CHECKOUT/.build.lock from before its `npm ci` until after the flip, and every
+# preview build waits on that same lock — so a deploy that wedges does not merely fail to deploy,
+# it stops every staging site on the box, indefinitely, with nothing timing out to say so. An hour
+# is the backstop for that, chosen to clear the two things a legitimate run can spend: the lock's
+# own 900s wait, if a preview build is already running, and then a full npm ci and build.
 TimeoutStartSec={{ deploy_request_timeout_sec }}
 ExecStart={{ deploy_request_runner_path }}
