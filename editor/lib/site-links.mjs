@@ -4,7 +4,7 @@
 // `home_url()`, which in Playground is the scoped WASM origin with plain `?p=` permalinks.
 // Those addresses are not the site: they render this instance's own theme, and the site is
 // built by Astro from the content repository. This module produces the real ones and writes
-// them where the mu-plugin's section 12 can look them up.
+// them where the mu-plugin's section 13 can look them up.
 //
 // THREE PROPERTIES ARE LOAD-BEARING.
 //

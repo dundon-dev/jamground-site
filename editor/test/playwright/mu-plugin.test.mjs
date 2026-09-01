@@ -185,7 +185,63 @@ test('mu-plugin: allowlist, supports, block assets, welcome guide, trimmed admin
       );
     }
 
-    // 12. Site links name the site. Two cases, and the second is the honest-absence one.
+    // 12. The rooms behind the doors, asserted through the registries the mu-plugin actually
+    // acts on rather than through the editor's chrome — the same reason the format allowlist
+    // above is checked against `core/rich-text` and not against the toolbar. A pattern picker
+    // that changed its markup would make a UI assertion pass for the wrong reason; an empty
+    // registry cannot.
+    const closed = await page.evaluate(async () => {
+      const client = window.jamgroundClient;
+      const root = await client.documentRoot;
+      await client.writeFile(root + '/jp-closed-probe.php', `<?php require '${root}/wp-load.php';
+        $wp_block = get_post_type_object('wp_block');
+        echo json_encode([
+          'patterns'           => array_column(WP_Block_Patterns_Registry::get_instance()->get_all_registered(), 'name'),
+          'patternCategories'  => count(WP_Block_Pattern_Categories_Registry::get_instance()->get_all_registered()),
+          'coreBlockPatterns'  => (bool) current_theme_supports('core-block-patterns'),
+          'blockTemplates'     => (bool) current_theme_supports('block-templates'),
+          'wpBlockShowUi'      => (bool) $wp_block->show_ui,
+          'wpBlockShowInRest'  => (bool) $wp_block->show_in_rest,
+        ]);`);
+      const out = await client.run({ code: `<?php require '${root}/jp-closed-probe.php';` });
+      return JSON.parse(out.text);
+    });
+
+    assert.deepEqual(
+      closed.patterns, [],
+      `no block pattern should be registered — a pattern is a pre-built layout of blocks the contract cannot represent, got: ${closed.patterns.join(', ')}`
+    );
+    assert.equal(closed.patternCategories, 0, 'an empty pattern registry should leave no categories to browse either');
+    assert.equal(closed.coreBlockPatterns, false, 'core-block-patterns theme support should be removed');
+    assert.equal(closed.blockTemplates, false, 'block-templates theme support should be removed — it is what offers the site editor and the Template panel');
+    assert.equal(closed.wpBlockShowUi, false, 'synced patterns (wp_block) are stored in a database deleted on the next reload, so they must have no UI');
+    assert.equal(closed.wpBlockShowInRest, false, 'wp_block must also leave the REST index, which is what feeds the inserter and the admin data layer');
+
+    // 12b. And the routes. Section 5 leaves `edit.php`/`post.php` reachable on purpose; these
+    // are the ones nothing in the product has business on, so landing on one should put an
+    // editor somewhere they can work rather than on a screen that cannot save.
+    for (const closedScreen of ['site-editor.php', 'themes.php']) {
+      await page.evaluate(async (screen) => {
+        await window.jamgroundClient.goTo('/wp-admin/' + screen);
+      }, closedScreen);
+
+      let landed = null;
+      const routeDeadline = Date.now() + 60000;
+      while (Date.now() < routeDeadline) {
+        for (const f of page.frames()) {
+          try { if (await f.locator('#adminmenu').count()) { landed = f; break; } } catch {}
+        }
+        if (landed) break;
+        await page.waitForTimeout(250);
+      }
+      assert(landed, `${closedScreen} should redirect to an ordinary admin screen, which has #adminmenu`);
+      assert.equal(
+        await landed.locator('#site-editor, .edit-site, .wp-full-overlay, #wpbody-content .theme-browser').count(), 0,
+        `${closedScreen} should not render its own screen`
+      );
+    }
+
+    // 13. Site links name the site. Two cases, and the second is the honest-absence one.
     //
     // A real imported entity carries `_jamground_id`, so it was in the map boot wrote and its
     // permalink is rewritten. The probe post above does NOT — it was inserted directly, after

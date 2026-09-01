@@ -10,7 +10,7 @@
  * control — Playground cannot enforce authorization, so least privilege is
  * enforced entirely at the GitHub layer.
  *
- * Thirteen hooks, in this order. The first five narrow what can be WRITTEN; the rest narrow
+ * Fourteen hooks, in this order. The first five narrow what can be WRITTEN; the rest narrow
  * what is SHOWN, and the last points WordPress's own site links at the site:
  *   0. init                        — register the jamground_author post type
  *   1. allowed_block_types_all     — the inserter allowlist, per post type
@@ -24,7 +24,9 @@
  *   9. admin_head                  — remove the help tabs
  *  10. enqueue_block_editor_assets — the inline-format allowlist (the file's only JS)
  *  11. init                        — drop the panels and taxonomies nothing reads back
- *  12. post_link / preview_post_link / admin_bar_menu — site links point at the site
+ *  12. after_setup_theme / init / load-* — close the rooms behind the doors section 5 took
+ *                                   off the menu: patterns, the site editor, synced patterns
+ *  13. post_link / preview_post_link / admin_bar_menu — site links point at the site
  *
  * No jamground/* block is registered here: this release ships none, so the allowlist below
  * is core blocks only.
@@ -188,7 +190,7 @@ add_action('admin_menu', function () {
 
 // 6. The admin bar: remove the nodes that lead out of the product.
 //
-// `site-name` is deliberately absent from this list. It is a link to the site, so section 12
+// `site-name` is deliberately absent from this list. It is a link to the site, so section 13
 // owns it — it gets a real address rather than being taken away.
 //
 // PRIORITY 99999, AND THE NUMBER IS LOAD-BEARING. Most of WordPress's nodes are added between
@@ -334,7 +336,78 @@ add_action('init', function () {
     unregister_taxonomy_for_object_type('post_tag', 'post');
 }, 11);
 
-// 12. Site links point at the site.
+// 12. The rooms behind the doors section 5 took off the menu.
+//
+// Removing an entry from `admin_menu` removes the ENTRY. Every room it led to is still there:
+// `themes.php` and `site-editor.php` answer on their own URLs, the site editor's own UI links
+// on to Styles, Templates, Patterns and Navigation, the inserter still offers core's and the
+// theme's pattern libraries, and synced patterns still have a post type whose rows live in a
+// database that is deleted on the next reload. Each of those is exactly the defect section 5
+// names — an editor who follows one either changes nothing, or changes something that is thrown
+// away — and hiding a menu entry closed none of them.
+//
+// UNLIKE SECTION 5, THIS CLOSES ROUTES, and the difference is deliberate rather than
+// inconsistent. Section 5 leaves `edit.php` and `post.php` reachable because the Playwright
+// suite navigates to them by URL; taking those would take the tests with them. Nothing
+// navigates to a theme or site-editor route, here or in the suite, because nothing in this
+// product has any business on one.
+//
+// PATTERNS ARE CLOSED THREE TIMES, because there are three ways they arrive and removing one
+// leaves the other two. `core-block-patterns` is theme support and covers only core's own;
+// `should_load_remote_block_patterns` covers the pattern directory fetched over the network,
+// which in Playground is a CORS-proxied request for markup the contract could not represent
+// anyway; and the registry sweep covers the active theme's `patterns/` directory, which neither
+// of the first two touches. A pattern is a pre-built layout of blocks — several of them use
+// blocks the contract has no field for, so inserting one produces work that is refused at save.
+add_action('after_setup_theme', function () {
+    remove_theme_support('core-block-patterns');
+    remove_theme_support('block-templates');   // the site editor, and the post editor's Template panel
+}, 11);
+
+add_filter('should_load_remote_block_patterns', '__return_false');
+
+add_action('init', function () {
+    // Whatever survived the two above — the theme's own patterns register on `init`, so this
+    // runs after them at 20 rather than alongside section 11 at 11.
+    if (class_exists('WP_Block_Patterns_Registry')) {
+        $patterns = WP_Block_Patterns_Registry::get_instance();
+        foreach ($patterns->get_all_registered() as $pattern) {
+            $patterns->unregister($pattern['name']);
+        }
+    }
+    if (class_exists('WP_Block_Pattern_Categories_Registry')) {
+        $categories = WP_Block_Pattern_Categories_Registry::get_instance();
+        foreach ($categories->get_all_registered() as $category) {
+            $categories->unregister($category['name']);
+        }
+    }
+
+    // Synced patterns (`wp_block`). NOT `unregister_post_type()`: core registers it with
+    // `_builtin => true`, and unregistering a built-in type returns a WP_Error and changes
+    // nothing. Taking its UI and its REST presence is what removes it from the inserter's
+    // Patterns tab, the admin, and the data layer that feeds both.
+    $wp_block = get_post_type_object('wp_block');
+    if ($wp_block) {
+        $wp_block->show_ui = false;
+        $wp_block->show_in_menu = false;
+        $wp_block->show_in_rest = false;
+        $wp_block->show_in_admin_bar = false;
+        $wp_block->public = false;
+    }
+}, 20);
+
+// The routes themselves. A redirect rather than `wp_die()`: an editor who lands on one by an
+// old link or a stray click should end up somewhere they can work, not on an error page telling
+// them off for a URL they did not type.
+foreach (['themes.php', 'theme-install.php', 'theme-editor.php', 'site-editor.php', 'customize.php'] as $jamground_closed_screen) {
+    add_action("load-{$jamground_closed_screen}", function () {
+        wp_safe_redirect(admin_url('edit.php?post_type=page'));
+        exit;
+    });
+}
+unset($jamground_closed_screen);
+
+// 13. Site links point at the site.
 //
 // WordPress resolves "View Page", "Preview" and the admin bar's site name through
 // `home_url()`, which here is the Playground scoped origin with plain `?p=` permalinks. Every
