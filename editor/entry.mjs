@@ -1,9 +1,10 @@
 // Entry point for the shell - boots Playground cross-origin
 
-import { createBlock, serialize, parse, getBlockType } from '@wordpress/blocks';
+import { createBlock, serialize, parse, getBlockType, registerBlockType } from '@wordpress/blocks';
 import { registerCoreBlocks } from '@wordpress/block-library';
 import { addFilter } from '@wordpress/hooks';
 import { stripSupports } from './lib/block-supports.mjs';
+import { registerCustomBlocks } from './blocks/definitions.mjs';
 import { importPosts } from './lib/import.mjs';
 import { readPosts } from './lib/read-posts.mjs';
 import { writeSiteLinks } from './lib/site-links.mjs';
@@ -66,6 +67,12 @@ function generateBranchName() {
 function setUpHostRegistry() {
   stripSupports(addFilter);
   registerCoreBlocks();
+  // The three jamground/* blocks, in the registry that has to READ them. This page renders no
+  // canvas, so they are registered with no `edit` and no React is pulled in for them: what
+  // blocks-to-wp.mjs needs is createBlock() accepting the attributes, and what export.mjs needs is
+  // getBlockType() naming them — which is also what makes attribute-guard.mjs's jamground/* arm an
+  // allowlist rather than an empty set that refuses the first attribute it sees.
+  registerCustomBlocks(registerBlockType);
 }
 
 try {
@@ -109,6 +116,13 @@ const muPluginSource = typeof window !== 'undefined' && window.__muPluginSource
   ? window.__muPluginSource
   : '';
 
+// The block bundle - inlined from blocks/browser.mjs by build.mjs, the same way the mu-plugin
+// source is, and written into the WASM filesystem beside it. Playground's filesystem is not this
+// origin, so there is no URL the editor could fetch it from that this shell could have produced.
+const blockBundleSource = typeof window !== 'undefined' && window.__blockBundleSource
+  ? window.__blockBundleSource
+  : '';
+
 async function installMuPlugin(client) {
   if (!muPluginSource) {
     console.warn('[entry.mjs] No mu-plugin source to install');
@@ -117,6 +131,15 @@ async function installMuPlugin(client) {
   const root = await client.documentRoot;
   await client.mkdir(root + '/wp-content/mu-plugins');
   await client.writeFile(root + '/wp-content/mu-plugins/jamground.php', muPluginSource);
+
+  // Beside the mu-plugin, because the mu-plugin is what reads it: section 14 enqueues it by
+  // reading this file off disk, so the two travel together and there is no third place to keep in
+  // step. A missing bundle is reported by the mu-plugin rather than passed over — an inserter that
+  // is silently short is the failure mode this whole path is built to avoid.
+  if (!blockBundleSource) {
+    console.warn('[entry.mjs] No block bundle to install — jamground/* blocks will not be offered');
+  }
+  await client.writeFile(root + '/wp-content/mu-plugins/jamground-blocks.js', blockBundleSource);
 }
 
 // Every fresh WordPress install ships its own seed content: a "Hello world!" post, a "Sample

@@ -14,9 +14,20 @@
 // `wp-blocks.mjs` use, because `@wordpress/block-library` touches `window` on import and this
 // module runs in both the browser bundle and this Node test.
 
-// The contract-representable attributes per block. `core/separator` has
-// none. `jamground/*` is handled separately below: those blocks are registered with exactly
-// the schema fields as attributes, so the registration itself is the allowlist.
+// The contract-representable attributes per block. `core/separator` has none.
+//
+// `jamground/*` IS HANDLED SEPARATELY BELOW, FROM THE DEFINITIONS TABLE — not, as this comment
+// used to say, from what the block registered. That claim was "registered with exactly the schema
+// fields as attributes, so the registration itself is the allowlist", and it is false in BOTH
+// registries: WordPress adds `lock`, `metadata` and `style` to every block it registers, so
+// asking the registry made this layer three attributes wider than the contract, silently, in the
+// one place whose whole job is refusing what the contract cannot represent.
+//
+// It was not hypothetical. Renaming a block in the list view sets `metadata: { name }`; the guard
+// allowed it through, and export.mjs's custom arm iterates the contract's fields — so the rename
+// was DROPPED on save without a word. Losing work quietly is exactly the failure INV-5b names,
+// and a core block has never behaved that way here: `core/paragraph`'s allowlist is `['content']`,
+// so the same rename on a paragraph has always been refused, by name.
 const ALLOWLIST = {
   'core/paragraph': ['content'],
   'core/heading': ['content', 'level'],
@@ -29,7 +40,18 @@ const ALLOWLIST = {
   'core/separator': [],
 };
 
+import { CUSTOM_BLOCKS, CONTRACT_TYPE_BY_BLOCK_NAME } from '../blocks/definitions.mjs';
+
 const isJamgroundBlock = (name) => name.startsWith('jamground/');
+
+/** A `jamground/*` block's contract-representable attributes, from the one table both registries
+ *  register from — so this layer allows exactly what the contract has a field for, whatever
+ *  WordPress adds around it. block-definitions.test.mjs is what keeps that table equal to the
+ *  Zod shapes; this function is why that test is load-bearing rather than tidy. */
+function jamgroundAllowed(name) {
+  const type = CONTRACT_TYPE_BY_BLOCK_NAME[name];
+  return type ? Object.keys(CUSTOM_BLOCKS[type].attributes) : null;
+}
 
 // Strips two things unconditionally, ahead of the table check below:
 // the ephemeral WordPress attachment `id` (it never appears in content, and is meaningless on
@@ -84,13 +106,33 @@ export function guardBlockAttributes(api, block) {
   const stripped = stripEmptyTableCaption(name, stripImageEphemera(name, attributes));
 
   const blockType = api.getBlockType(name);
-  const allowed = isJamgroundBlock(name)
-    ? new Set(Object.keys(blockType?.attributes ?? {}))
-    : new Set(ALLOWLIST[name]);
 
   if (!isJamgroundBlock(name) && !(name in ALLOWLIST)) {
     throw new Error(`INV-5b layer 3: no contract representation for block "${name}"`);
   }
+
+  // AN UNREGISTERED jamground/* BLOCK IS A MISSING REGISTRATION, NOT A BAD ATTRIBUTE, and saying
+  // so is the whole point of this branch. A jamground/* block is allowlisted by asking the
+  // registry what it registered — so if `getBlockType` returns undefined, `allowed` is the empty
+  // set and the loop below refuses the FIRST attribute it reaches with "attribute \"heading\" on
+  // block \"jamground/hero\" has no contract representation". That is a true sentence about a
+  // false premise, and it names the wrong cause: `heading` is fine, the registration is missing.
+  //
+  // It is exactly the failure two registries invite. The host page and the editor inside
+  // Playground register separately (entry.mjs and blocks/browser.mjs), so a block present in one
+  // and absent from the other is a live possibility rather than a hypothetical, and this is the
+  // path an export runs down when it happens.
+  if (isJamgroundBlock(name) && (!blockType || !jamgroundAllowed(name))) {
+    throw new Error(
+      `INV-5b layer 3: block "${name}" is not registered in the registry doing the export, so its ` +
+      'attributes have no allowlist — this is a missing registration, not a bad attribute ' +
+      '(editor/blocks/definitions.mjs is the table both registries read)',
+    );
+  }
+
+  const allowed = isJamgroundBlock(name)
+    ? new Set(jamgroundAllowed(name))
+    : new Set(ALLOWLIST[name]);
 
   for (const [key, value] of Object.entries(stripped)) {
     if (allowed.has(key)) continue;

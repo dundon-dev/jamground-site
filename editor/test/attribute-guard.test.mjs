@@ -10,6 +10,12 @@ const { registerCoreBlocks } = require('@wordpress/block-library');
 const { createBlock, getBlockType, parse, serialize, registerBlockType, unregisterBlockType } = require('@wordpress/blocks');
 registerCoreBlocks();
 
+// The three custom blocks, from the table both registries read. They are registered here rather
+// than synthesised because the guard now allowlists them FROM that table, so a synthetic stand-in
+// would rehearse a path no export takes.
+const { registerCustomBlocks } = await import('../blocks/definitions.mjs');
+registerCustomBlocks(registerBlockType);
+
 const { guardBlockAttributes, guardExportTree } = await import('../lib/attribute-guard.mjs');
 
 const api = { getBlockType };
@@ -128,20 +134,49 @@ test('a code block carries content and nothing else', () => {
   assert.deepEqual(Object.keys(out), ['content']);
 });
 
-test('a jamground custom block allows exactly its registered (schema) attributes', () => {
+test('a jamground block allows exactly its CONTRACT fields, not everything WordPress registered', () => {
+  // This test used to register a synthetic `jamground/callout` and assert the guard allowed the
+  // attribute it declared — which rehearsed the generic handling, and also rehearsed the bug.
+  // WordPress adds `lock`, `metadata` and `style` to every block it registers, in BOTH registries,
+  // so an allowlist read off `getBlockType().attributes` is three attributes wider than the
+  // contract. `metadata` is the one that bites: renaming a block in the list view sets it, the
+  // guard allowed it, and export dropped it without a word.
+  const registered = Object.keys(getBlockType('jamground/hero').attributes);
+  assert.deepEqual(
+    registered.filter((k) => !['heading', 'body', 'media', 'cta'].includes(k)).sort(),
+    ['lock', 'metadata', 'style'],
+    'if WordPress has stopped adding these, or started adding a fourth, this layer needs looking at',
+  );
+
+  const [block] = parse(serialize([createBlock('jamground/hero', { heading: 'H' })]));
+  assert.deepEqual(guardBlockAttributes(api, block), { heading: 'H' });
+
+  assert.throws(
+    () => guardBlockAttributes(api, {
+      name: 'jamground/hero',
+      attributes: { heading: 'H', metadata: { name: 'Intro hero' } },
+    }),
+    /attribute "metadata" on block "jamground\/hero" has no contract representation/,
+    'a rename the contract cannot hold must be refused, exactly as it is on core/paragraph',
+  );
+});
+
+test('a jamground block outside the definitions table is refused even when it IS registered', () => {
+  // The tighter half of reading the table rather than the registry. A fourth custom block cannot
+  // arrive by registration alone: it needs a contract type and a row, and block-definitions.test
+  // is what ties those together.
   registerBlockType('jamground/callout', {
     title: 'Callout',
     category: 'text',
     attributes: { text: { type: 'string', default: '' } },
-    supports: { className: false },
-    save() {
-      return null;
-    },
+    save() { return null; },
   });
   try {
     const [block] = parse(serialize([createBlock('jamground/callout', { text: 'hi' })]));
-    const out = guardBlockAttributes(api, block);
-    assert.deepEqual(out, { text: 'hi' });
+    assert.throws(
+      () => guardBlockAttributes(api, block),
+      /is not registered in the registry doing the export/,
+    );
   } finally {
     unregisterBlockType('jamground/callout');
   }

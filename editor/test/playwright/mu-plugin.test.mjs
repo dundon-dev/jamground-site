@@ -8,10 +8,15 @@
 // the mu-plugin is unverified.
 //
 // The allowlist alone is a content-quality / round-trip mechanism, never a security
-// control — this test only observes what the inserter offers, in-browser. There is no
-// jamground/* block in this release, so the inserter assertion owed here is the NEGATIVE
-// one: forbidden core blocks (Columns, Cover, Group, …) must not appear. The positive form —
-// a custom block appearing — has no reproducible artefact and is not asserted.
+// control — this test only observes what the inserter offers, in-browser.
+//
+// THE POSITIVE FORM IS NOW ASSERTED, and this file is the only place it can be. PoC-7d
+// (03 §Custom-blocks) found that PHP registration alone gives a registered type that never
+// appears in the inserter, so the three jamground/* blocks are registered by a JavaScript bundle
+// the shell writes into the WASM filesystem — and every step of that has the same symptom when it
+// goes wrong: an inserter that is quietly short, with nothing in any console. The bundle can fail
+// to be written, fail to be enqueued, fail to find `wp.blockEditor`, or register a block that
+// hook 1's allowlist then filters back out. None of those is visible from Node.
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { execSync } from 'child_process';
@@ -162,6 +167,117 @@ test('mu-plugin: allowlist, supports, block assets, welcome guide, trimmed admin
       !names.some((n) => /^image$/i.test(n)),
       `the inserter should not offer Image while there is no media path, got: ${names.join(', ')}`
     );
+
+    // 1d. THE THREE CUSTOM BLOCKS, and each assertion below distinguishes one way the chain
+    // fails from the others. `window.__jamgroundBlocks` is set by the bundle itself, so it tells
+    // "the bundle never ran" apart from "the bundle ran and registered nothing" — which the
+    // registry alone cannot, because a block could in principle be there for another reason.
+    const bundle = await admin.evaluate(() => window.__jamgroundBlocks || null);
+    assert(bundle, 'the block bundle did not run at all — check that entry.mjs wrote jamground-blocks.js and section 14 enqueued it');
+    assert(!bundle.error, `the block bundle ran and failed: ${bundle.error}`);
+    assert.deepEqual(bundle.registered, ['jamground/hero', 'jamground/feature-grid', 'jamground/cta']);
+
+    const custom = await admin.evaluate(() => {
+      const types = {};
+      for (const name of ['jamground/hero', 'jamground/feature-grid', 'jamground/cta']) {
+        const type = wp.blocks.getBlockType(name);
+        types[name] = type ? {
+          hasEdit: typeof type.edit === 'function',
+          savesNull: type.save() === null,
+          attributes: Object.keys(type.attributes).sort(),
+          customClassName: wp.blocks.hasBlockSupport(type, 'customClassName', true),
+          html: wp.blocks.hasBlockSupport(type, 'html', true),
+        } : null;
+      }
+      return types;
+    });
+
+    for (const [name, type] of Object.entries(custom)) {
+      assert(type, `${name} is not in the editor's registry — the bundle ran but did not register it`);
+      // The `edit` is the whole reason a bundle exists rather than PHP registration. PoC-7d's
+      // finding was precisely a registered type WITHOUT one, which never reached the inserter.
+      assert(type.hasEdit, `${name} has no edit component, which is the PoC-7d failure exactly`);
+      assert(type.savesNull, `${name} must be dynamic — 11 §4b`);
+      // Correction 2: `register_block_type_args` (section 2) does not fire for a block registered
+      // in JavaScript only, so these three must carry their own stripped supports. If this fails,
+      // the Advanced panel is offering an "Additional CSS class(es)" field that export refuses.
+      assert.equal(type.customClassName, false, `${name} must strip customClassName itself — no PHP filter reaches it`);
+      assert.equal(type.html, false, `${name} must not offer an HTML edit view of markup the contract owns`);
+    }
+    // A SUPERSET, AND A TRIPWIRE ON WHAT MAKES IT ONE. WordPress adds `lock`, `metadata` and
+    // `style` to every block it registers, so the registered set is never just the contract's
+    // fields — which is why attribute-guard.mjs allowlists a jamground/* block from the
+    // definitions table and not from `getBlockType().attributes`. Pinned in both directions: the
+    // contract's fields must all be there, and the extras must be exactly those three, so a
+    // WordPress upgrade adding a fourth arrives as a failure here rather than as three
+    // attributes' worth of silent slack in layer 3.
+    const WP_UNIVERSAL = ['lock', 'metadata', 'style'];
+    for (const [name, contractFields] of [
+      ['jamground/hero', ['body', 'cta', 'heading', 'media']],
+      ['jamground/feature-grid', ['columns', 'items']],
+      ['jamground/cta', ['body', 'heading', 'link']],
+    ]) {
+      for (const field of contractFields) {
+        assert(custom[name].attributes.includes(field), `${name} must register ${field}, got: ${custom[name].attributes.join(', ')}`);
+      }
+      assert.deepEqual(
+        custom[name].attributes.filter((a) => !contractFields.includes(a)).sort(), WP_UNIVERSAL,
+        `${name} registered attributes beyond the contract and WordPress's own three`,
+      );
+    }
+
+    // 1e. And what the INSERTER does with them, which is a different question from what the
+    // registry holds: hook 1 filters the registry down, so a registered block can be absent here.
+    for (const expected of ['Hero', 'Feature grid']) {
+      assert(
+        names.some((n) => n.toLowerCase() === expected.toLowerCase()),
+        `the inserter should offer ${expected}, got: ${names.join(', ')}`
+      );
+    }
+    // Call to action is registered and round-trips, and is deliberately NOT offered: `Cta.link` is
+    // required and there is no entity picker, so one inserted from this menu could not be saved.
+    // Same argument as Image, one line up.
+    assert(
+      !names.some((n) => /^call to action$/i.test(n)),
+      `the inserter should not offer Call to action while there is no entity picker, got: ${names.join(', ')}`
+    );
+
+    // 1f. THE CANVAS, which is the assertion the fidelity gate cannot make. That gate compares the
+    // markup module's two renderings in Node; this compares what the REAL edit component put in
+    // the REAL editor against the markup contract 11 §4c freezes. Between them they close the
+    // chain: Astro == module (custom.test.mjs), module == React (fidelity.test.mjs), React == the
+    // canvas (here).
+    await admin.evaluate(() => {
+      const block = wp.blocks.createBlock('jamground/hero', {
+        heading: 'Fidelity probe', body: 'Body text.',
+      });
+      wp.data.dispatch('core/block-editor').insertBlocks(block);
+    });
+    await page.waitForTimeout(2000);
+
+    const heroShape = await cf.locator('section.jp-hero').first().evaluate((section) => ({
+      tag: section.tagName.toLowerCase(),
+      heading: section.querySelector('.jp-hero__heading')
+        && { tag: section.querySelector('.jp-hero__heading').tagName.toLowerCase(),
+             text: section.querySelector('.jp-hero__heading').textContent },
+      body: section.querySelector('.jp-hero__body')
+        && { tag: section.querySelector('.jp-hero__body').tagName.toLowerCase(),
+             text: section.querySelector('.jp-hero__body').textContent },
+      // Absent attributes must render no element at all, not an empty one — an empty <img> in the
+      // canvas would be a picture of a hero the site will not draw.
+      media: section.querySelectorAll('.jp-hero__media').length,
+      cta: section.querySelectorAll('.jp-hero__cta').length,
+      // The wrapper question: apiVersion 3 puts the block props on the outermost element, and if
+      // that element is a div wrapping our section, the block CSS has an extra box to fight.
+      wrappedInDiv: section.parentElement.classList.contains('wp-block'),
+    }));
+
+    assert.equal(heroShape.tag, 'section');
+    assert.deepEqual(heroShape.heading, { tag: 'h2', text: 'Fidelity probe' });
+    assert.deepEqual(heroShape.body, { tag: 'p', text: 'Body text.' });
+    assert.equal(heroShape.media, 0, 'an absent media must render no <img>');
+    assert.equal(heroShape.cta, 0, 'an absent cta must render no <a>');
+    assert.equal(heroShape.wrappedInDiv, false, 'useBlockProps must land on the contract\'s own root element');
 
     // 10. The inline-format allowlist. Asserted through the registry rather than by opening
     // the toolbar's "More" menu: the menu's markup is Gutenberg's to change, the registry is

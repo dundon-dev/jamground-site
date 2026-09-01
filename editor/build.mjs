@@ -64,6 +64,28 @@ async function build() {
       console.warn('Could not read mu-plugin/jamground.php:', error.message);
     }
 
+    // THE BLOCK BUNDLE — the second entry point, and the only way the three jamground/* blocks
+    // reach the inserter. 03 §Custom-blocks (PoC-7d) settles that PHP registration alone gives a
+    // registered type with no `edit` that never appears, and there is no build step inside
+    // Playground, so it is built here and carried in.
+    //
+    // IIFE, NOT ESM, and the format is load-bearing. WordPress prints an enqueued script with a
+    // plain <script> tag, and an ESM bundle's top-level `export` in a classic script is a syntax
+    // error that takes the whole file with it before a line runs — an empty inserter with one
+    // console message that names no block. `wp-*` are marked external and read off the global
+    // instead, so no second React enters the page.
+    const blocksResult = await esbuild.build({
+      entryPoints: [path.join(__dirname, 'blocks', 'browser.mjs')],
+      outfile: path.join(distDir, 'blocks.js'),
+      format: 'iife',
+      bundle: true,
+      platform: 'browser',
+      target: 'es2017',
+      sourcemap: false,
+      minify: false,
+      external: ['@wordpress/*'],
+    });
+
     // Run esbuild
     const result = await esbuild.build({
       entryPoints: [path.join(__dirname, 'entry.mjs')],
@@ -77,7 +99,7 @@ async function build() {
       external: ['https://unpkg.com/*'],
     });
 
-    console.log('Build successful');
+    console.log(`Build successful (block bundle: ${blocksResult.errors.length} errors)`);
 
     // Copy index.html to dist and inject blueprint
     const htmlPath = path.join(__dirname, 'index.html');
@@ -86,7 +108,14 @@ async function build() {
     // Inject blueprint and mu-plugin source as global variables in the HTML
     const blueprintScript = `<script>window.__blueprint = ${JSON.stringify(blueprintData)};</script>`;
     const muPluginScript = `<script>window.__muPluginSource = ${JSON.stringify(muPluginSource)};</script>`;
-    htmlContent = htmlContent.replace('</head>', `${blueprintScript}${muPluginScript}</head>`);
+
+    // The block bundle travels the same way the mu-plugin does — as a string on `window`, read by
+    // entry.mjs and written into the WASM filesystem after boot — rather than as a file the
+    // browser fetches. Playground's filesystem is not the shell's origin, so there is no URL the
+    // editor could load it from that the shell could also have produced.
+    const blocksBundle = await fs.readFile(path.join(distDir, 'blocks.js'), 'utf-8');
+    const blocksScript = `<script>window.__blockBundleSource = ${JSON.stringify(blocksBundle)};</script>`;
+    htmlContent = htmlContent.replace('</head>', `${blueprintScript}${muPluginScript}${blocksScript}</head>`);
 
     const distHtmlPath = path.join(distDir, 'index.html');
     await fs.writeFile(distHtmlPath, htmlContent);

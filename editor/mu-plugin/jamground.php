@@ -10,7 +10,7 @@
  * control — Playground cannot enforce authorization, so least privilege is
  * enforced entirely at the GitHub layer.
  *
- * Fourteen hooks, in this order. The first five narrow what can be WRITTEN; the rest narrow
+ * Fifteen hooks, in this order. The first five narrow what can be WRITTEN; the rest narrow
  * what is SHOWN, and the last points WordPress's own site links at the site:
  *   0. init                        — register the jamground_author post type
  *   1. allowed_block_types_all     — the inserter allowlist, per post type
@@ -27,9 +27,13 @@
  *  12. after_setup_theme / init / load-* — close the rooms behind the doors section 5 took
  *                                   off the menu: patterns, the site editor, synced patterns
  *  13. post_link / preview_post_link / admin_bar_menu — site links point at the site
+ *  14. enqueue_block_editor_assets — the jamground/* block bundle
  *
- * No jamground/* block is registered here: this release ships none, so the allowlist below
- * is core blocks only.
+ * THE THREE jamground/* BLOCKS ARE NOT REGISTERED IN THIS FILE, and that is a finding rather
+ * than a layout choice. PoC-7d (03 §Custom-blocks) registered one in PHP alone and got a
+ * registered block type that never appeared in the inserter: PHP registration gives a
+ * render_callback and a REST presence, and gives no `edit` component. They are registered by the
+ * JavaScript bundle section 14 enqueues, which the shell writes in beside this file.
  */
 
 // 0. The author post type.
@@ -103,6 +107,18 @@ add_action('init', function () {
 // here the moment that path exists — and nowhere else has to change for it to come back,
 // because attribute-guard.mjs already allows its three attributes.
 //
+// `jamground/cta` IS NOT AMONG THEM EITHER, FOR EXACTLY THAT REASON, and this is the one place
+// the three custom blocks are not treated alike. All three are registered by section 14's bundle,
+// all three round-trip, and all three render in the canvas — so a page that already carries a
+// `cta` opens, shows it, and saves it back unchanged. What `cta` has and the other two do not is
+// a REQUIRED field with no control: `Cta.link` is `{ label, ref }`, where `ref` names another
+// entity and there is no picker for one yet. A `cta` inserted from this menu could not be saved,
+// which is the `core/image` defect with a different noun. `hero` and `feature-grid` have controls
+// for every required field they carry, so they are offered.
+//
+// The moment an entity picker exists, this is a one-line change: nothing else distinguishes the
+// three, and editor/lib/attribute-guard.mjs already allowlists all of them by asking the registry.
+//
 // The signature is `10, 2` rather than `10, 0` so the filter receives the block editor's
 // context and can answer differently per type. `$context->post` is null in the contexts that
 // have no post at all (the site and widget editors), which is why it is checked before use.
@@ -119,6 +135,8 @@ add_filter('allowed_block_types_all', function ($allowed_block_types, $block_edi
         'core/code',
         'core/table',
         'core/separator',
+        'jamground/hero',
+        'jamground/feature-grid',
     ];
 }, 10, 2);
 
@@ -528,3 +546,52 @@ add_action('admin_bar_menu', function ($bar) {
     }
     $bar->remove_node('dashboard');  // "Dashboard", whose menu entry section 5 removed
 }, 100000);  // after section 6, for the reason given there
+
+// 14. The jamground/* block bundle.
+//
+// The three custom blocks are registered HERE and nowhere else, by JavaScript. PoC-7d
+// (03 §Custom-blocks) is unambiguous about why: registering `jamground/hero` in PHP alone
+// produced a registered block type that NEVER APPEARED IN THE INSERTER, because PHP registration
+// gives a render_callback and a REST presence and gives no `edit` component. A bundle calling
+// `wp.blocks.registerBlockType` with `save: () => null` made it appear immediately.
+//
+// The file is written into the WASM filesystem beside this one by the shell (entry.mjs), because
+// there is no build step inside Playground and Playground's filesystem is not the shell's origin.
+//
+// AN INLINE SCRIPT ON A REGISTERED-BUT-SOURCELESS HANDLE, rather than a `src` URL. Registering a
+// handle with `src => false` and hanging the code off it as an inline script takes its ordering
+// from the dependency graph while leaving nothing for the browser to fetch — no URL to get wrong,
+// no MIME type to be served incorrectly, no request that can 404 inside a WASM filesystem.
+//
+// The four dependencies are the four globals the bundle reads. They are declared because that is
+// what they are, NOT because this screen would break without them: measured, removing
+// wp-block-editor from this list changes nothing, because the block editor screen enqueues all
+// four itself before anything of ours runs. So the browser suite cannot tell a correct list here
+// from an incomplete one, and the thing that would actually name a missing global is the
+// precondition check at the top of blocks/browser.mjs.
+//
+// EVERY FAILURE HERE IS THE SAME SYMPTOM: an inserter that is quietly two blocks short. So a
+// missing bundle is not passed over — it says so, in the console, naming the file it looked for.
+add_action('enqueue_block_editor_assets', function () {
+    $bundle = __DIR__ . '/jamground-blocks.js';
+    $source = is_readable($bundle) ? file_get_contents($bundle) : '';
+
+    wp_register_script(
+        'jamground-blocks',
+        false,
+        ['wp-blocks', 'wp-element', 'wp-block-editor', 'wp-components'],
+        null,
+        true
+    );
+    wp_enqueue_script('jamground-blocks');
+
+    if ($source === '' || $source === false) {
+        wp_add_inline_script('jamground-blocks', sprintf(
+            'console.error(%s); window.__jamgroundBlocks = { error: "bundle missing" };',
+            wp_json_encode('jamground blocks: no bundle at ' . $bundle . ' — the shell did not write it, so no jamground/* block is registered and the inserter is short by two')
+        ));
+        return;
+    }
+
+    wp_add_inline_script('jamground-blocks', $source);
+});

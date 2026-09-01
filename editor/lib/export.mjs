@@ -11,9 +11,11 @@
 // become markdown behind a frontmatter fence, a page's are a field of its own YAML document —
 // and that assembly is the kind table's `serialise`, not a `switch` here.
 //
-// The seven contract block types in scope — heading, paragraph, list, quote, code, table,
-// separator — are exactly the ones `blocks-to-wp.mjs` (the reverse direction) and
-// `blocks-to-mdast.mjs` cover. `image` is the one core-derived type still missing, because it
+// The ten contract block types in scope — heading, paragraph, list, quote, code, table,
+// separator, and the three `jamground/*` types — are exactly the ones `blocks-to-wp.mjs` (the
+// reverse direction) covers. `blocks-to-mdast.mjs` covers the eight core-derived ones only: a
+// post's body is markdown, and there is no markdown for a hero, so a custom block in a POST is
+// refused there rather than here. `image` is the one core-derived type still missing, because it
 // needs a media upload path that does not exist (import.mjs:12). A block outside
 // `attribute-guard.mjs`'s allowlist is refused there; one inside it but outside these seven
 // throws here, naming itself, rather than being silently dropped.
@@ -21,6 +23,7 @@ import { guardExportTree } from './attribute-guard.mjs';
 import { htmlToInline } from './html-to-inline.mjs';
 import { blocksToMdast } from './blocks-to-mdast.mjs';
 import { kindSpec } from './kinds.mjs';
+import { CUSTOM_BLOCKS, CONTRACT_TYPE_BY_BLOCK_NAME } from '../blocks/definitions.mjs';
 import { unified } from 'unified';
 import remarkStringify from 'remark-stringify';
 import remarkGfm from 'remark-gfm';
@@ -127,6 +130,33 @@ export function wpBlockToContractBlock(block) {
     // markup always shows come from `opacity`/`tagName` still being at their defaults.
     case 'core/separator':
       return { type: 'separator' };
+    // The three `jamground/*` types, all through one arm. They are dynamic (11 §4b), so the
+    // delimiter carries the attributes and nothing else — no HTML to read back, no marks to
+    // un-escape, and the mapping is the identity plus the two rules below.
+    //
+    // ABSENT STAYS ABSENT, the same rule the list arm above applies. WordPress hands back every
+    // registered attribute, so an optional field nobody set arrives as `undefined` and a
+    // `featureGrid` that has not been touched arrives with `columns: 3` from its registered
+    // default. Writing `body: undefined` would put a null in the YAML for a field the contract
+    // says should not be there; `columns` is REQUIRED, so its default is a real value and is
+    // written. The distinction is exactly `.optional()`, and it is read off the table rather than
+    // restated: an attribute with a registered default is one the contract requires.
+    //
+    // THE CONTRACT TYPE COMES FROM THE TABLE. `jamground/feature-grid` is `featureGrid`, and
+    // nothing here does that transformation itself.
+    case 'jamground/hero':
+    case 'jamground/feature-grid':
+    case 'jamground/cta': {
+      const type = CONTRACT_TYPE_BY_BLOCK_NAME[block.name];
+      const spec = CUSTOM_BLOCKS[type];
+      const out = { type };
+      for (const [field, attr] of Object.entries(spec.attributes)) {
+        const value = block.attributes?.[field];
+        if (value === undefined && !('default' in attr)) continue;
+        out[field] = value;
+      }
+      return out;
+    }
     default:
       throw new Error(`export: unmapped block "${block.name}" (03 §Export-Gutenberg step 2)`);
   }
