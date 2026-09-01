@@ -9,6 +9,7 @@ import { resolveDraftFlag } from '../../contract/env';
 import BlockList from '../../components/BlockList.astro';
 import { loadLinkIndex } from '../../lib/site-links';
 import { linkContext, resolveBlockLinks } from '../../lib/links';
+import { resolveBlockMedia } from '../../lib/media';
 import type { ResolvedBlock } from '../../lib/links';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 
@@ -26,17 +27,21 @@ export async function getStaticPaths() {
   const includeDrafts = resolveDraftFlag();
   const linkIndex = await loadLinkIndex();
 
-  /* Link.ref is a translation-group id, not a URL. Blocks are resolved here so that
-   * what reaches BlockList carries real hrefs and no raw ULID is representable downstream —
-   * see src/lib/links.ts. */
+  /* TWO PASSES, both here and neither in a component, because a reference that cannot be
+   * resolved should fail during path generation rather than part-way through writing a page.
+   * Link.ref is a translation-group id, not a URL (src/lib/links.ts); MediaRef.ref is a path
+   * rooted at the content repository, not a URL (src/lib/media.ts). So what reaches BlockList
+   * carries real hrefs and real srcs, and neither a raw ULID nor a raw content path is
+   * representable downstream. Separate passes because a link needs the link index and media
+   * needs a directory listing, and neither has any use for the other's. */
   const resolve = (entry: { data: { id: string; slug: string; locale: string; status: 'draft' | 'published'; blocks: unknown[] } }) =>
-    resolveBlockLinks(entry.data.blocks as never, linkContext(linkIndex, {
+    resolveBlockMedia(resolveBlockLinks(entry.data.blocks as never, linkContext(linkIndex, {
       collection: 'pages',
       id: entry.data.id,
       slug: entry.data.slug,
       locale: entry.data.locale,
       status: entry.data.status,
-    }, includeDrafts));
+    }, includeDrafts)));
 
   return settings.locales
     .flatMap(locale => {

@@ -17,6 +17,9 @@
  * there is exactly one file to keep in sync. */
 import '../../design/tokens.css';
 import '../../design/base.css';
+/* The page half of what base.css used to be. Split out because the mu-plugin sends base.css to
+ * the editor canvas and must not send this — see either file's header. */
+import '../../design/site.css';
 import '../../design/blocks/hero.css';
 import '../../design/blocks/feature-grid.css';
 import '../../design/blocks/cta.css';

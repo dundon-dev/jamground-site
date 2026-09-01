@@ -6,15 +6,31 @@
  * @wordpress/block-editor — read directly off that source rather than guessed, the same
  * "observed, not authored" standard applied throughout this markup table.
  * `media.alt` follows Hero.astro's precedent for the same MediaRef union: a
- * decorative image gets an empty alt, never the (absent) alt text. */
+ * decorative image gets an empty alt, never the (absent) alt text.
+ *
+ * `media` ARRIVES RESOLVED, carrying `src` rather than the contract's `ref`. A ref is a path
+ * rooted at the CONTENT repository, and rendering it straight into `src` made it a URL relative
+ * to whatever page was rendering — the exact mistake this component's own header says PostBody
+ * exists to avoid, made one layer further down. resolveBlockMedia() (../../lib/media.ts) runs
+ * upstream, at the same boundary link resolution does; the guard below is what makes that
+ * mandatory rather than conventional. */
 import type { z } from 'zod';
 import type { Block } from '../../contract/blocks.ts';
+import type { MarkupMedia } from '../../../design/markup/hero.ts';
 
-type Props = Omit<Extract<z.infer<typeof Block>, { type: 'image' }>, 'type'>;
+type Props = Omit<Extract<z.infer<typeof Block>, { type: 'image' }>, 'type' | 'media'> & {
+  media: MarkupMedia;
+};
 
 const { media, caption } = Astro.props as Props;
+
+if (typeof (media as { src?: unknown })?.src !== 'string') {
+  throw new Error(
+    'image media reached the renderer unresolved — blocks must go through resolveBlockMedia() (INV-4)',
+  );
+}
 ---
 <figure class="wp-block-image">
-  <img src={media.ref} alt={media.decorative ? '' : media.alt} />
+  <img src={media.src} alt={media.decorative ? '' : media.alt} />
   {caption && <figcaption class="wp-element-caption">{caption}</figcaption>}
 </figure>

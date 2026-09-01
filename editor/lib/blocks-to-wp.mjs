@@ -7,6 +7,7 @@
 // module runs both inside the browser bundle (registerCoreBlocks already called there) and
 // in this Node test (registerCoreBlocks called by domshim's caller).
 import { inlineToHtml } from './inline-to-html.mjs';
+import { CUSTOM_BLOCKS } from '../blocks/definitions.mjs';
 
 // `citation` and a code block's `text` are plain strings, not InlineText, so they are
 // HTML-entity-escaped rather than run through the markdown-aware inlineToHtml.
@@ -39,11 +40,36 @@ function tableToWp(api, block) {
   });
 }
 
+/** One `jamground/*` block. All three are DYNAMIC (11 §4b): `save()` returns null, so the
+ *  persisted form is a single self-closing delimiter carrying only the attributes, there is no
+ *  HTML to mismatch, and the mapping is close to an identity function — which is why one arm
+ *  covers all three rather than each getting its own.
+ *
+ *  ABSENT STAYS ABSENT — and the skip below is belt-and-braces rather than the thing that makes
+ *  that true, which is worth saying because the comment here claimed otherwise until the claim was
+ *  tested. Setting `media: undefined` and omitting `media` produce the SAME delimiter: serialize()
+ *  JSON-stringifies the attributes, and JSON.stringify drops an undefined value. Removing this
+ *  skip fails nothing, measured. It stays because it makes the intent legible and does not rest on
+ *  a property of somebody else's serialiser — but the property is pinned by a test on the
+ *  delimiter's exact bytes (custom-blocks.test.mjs), which is where a change in that serialiser
+ *  would actually be caught.
+ *
+ *  The block NAME comes from the definitions table, never from transforming the contract type —
+ *  `featureGrid` is `jamground/feature-grid`, and that boundary is one table's business. */
+function customToWp(api, block) {
+  const spec = CUSTOM_BLOCKS[block.type];
+  const attributes = {};
+  for (const field of Object.keys(spec.attributes)) {
+    if (block[field] !== undefined) attributes[field] = block[field];
+  }
+  return api.createBlock(spec.name, attributes);
+}
+
 /** Map one contract block to the matching WordPress block, built with createBlock()
- *  so serialize() produces markup that re-parses as isValid. Seven types are in scope:
- *  heading, paragraph, list, quote, code, table, separator — every core-derived type except
- *  `image`, which needs a media upload path that does not exist yet (import.mjs:12) and so
- *  stays refused here. */
+ *  so serialize() produces markup that re-parses as isValid. Ten types are in scope: heading,
+ *  paragraph, list, quote, code, table, separator, and the three `jamground/*` types — every
+ *  contract type except `image`, which needs a media upload path that does not exist yet
+ *  (import.mjs:12) and so stays refused here. */
 export function blockToWp(api, block) {
   switch (block.type) {
     case 'heading':
@@ -75,6 +101,11 @@ export function blockToWp(api, block) {
     // `tagName`'s registered defaults, which is why no attribute is set here.
     case 'separator':
       return api.createBlock('core/separator', {});
+    // The three custom types, all through one arm — see customToWp above.
+    case 'hero':
+    case 'featureGrid':
+    case 'cta':
+      return customToWp(api, block);
     default:
       throw new Error(`unmapped contract block type: ${block.type}`);
   }

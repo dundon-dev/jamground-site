@@ -65,11 +65,11 @@ test('all-draft content still has a front page address', () => {
   assert.deepEqual(production.byPostId, {}, 'and still no address for any draft entity itself');
 });
 
-test('a draft has an address on staging and none on the published site', () => {
+test('a draft has an address on a preview and none on the published site', () => {
   const posts = [row(4, 'page', 'pricing'), row(11, 'page', 'unfinished', 'draft')];
 
-  const staging = buildSiteLinks({ posts, origin: 'https://pr-42.preview.example.com', includeDrafts: true });
-  assert.equal(staging.byPostId['11'], pathForPage(LOCALE, 'unfinished'));
+  const preview = buildSiteLinks({ posts, origin: 'https://pr-42.preview.example.com', includeDrafts: true });
+  assert.equal(preview.byPostId['11'], pathForPage(LOCALE, 'unfinished'));
 
   // The production build excludes drafts, so there is no address anywhere for this entity and
   // the map must not invent one — the mu-plugin reads an absent entry as "remove the link".
@@ -80,7 +80,7 @@ test('a draft has an address on staging and none on the published site', () => {
 
 test('the baseline slug is used, never the possibly-unsaved one WordPress holds', () => {
   // readPosts returns both on purpose: `frontmatter.slug` is WordPress's current value, the
-  // top-level `slug` is what the file on disk has. The staging site serves the latter, so a
+  // top-level `slug` is what the file on disk has. The preview serves the latter, so a
   // link built from the former would point at an address that does not answer yet.
   const renamed = {
     ...row(4, 'page', 'pricing'),

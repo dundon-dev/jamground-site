@@ -300,12 +300,12 @@ test('a title typed in wp-admin reaches the committed blob, with slug unmoved an
     await page.click('#jamground-control-startAChange');
     status = await waitForStatusChange(page, beforeStart);
     // The status line no longer says only `changeStarted`: opening a change also hands over the
-    // staging address, so this reads `<changeStarted> — <stagingPreparing>` with the URL appended
+    // preview address, so this reads `<changeStarted> — <previewPreparing>` with the URL appended
     // as a link, and textContent concatenates the link's text. Asserting the prefix plus the
     // address is stronger than the old equality — it checks the address is actually offered.
     assert.ok(status.startsWith(VOCAB.changeStarted), `status should open with the change-started wording, got: ${status}`);
-    assert.ok(status.includes(VOCAB.stagingPreparing), 'the staging site should be offered when the change opens');
-    assert.match(status, /https:\/\/pr-\d+\.preview\./, 'the staging address itself must be on screen, not merely promised');
+    assert.ok(status.includes(VOCAB.previewPreparing), 'the preview should be offered when the change opens');
+    assert.match(status, /https:\/\/pr-\d+\.preview\./, 'the preview address itself must be on screen, not merely promised');
     const afterStartLen = apiCalls.length;
 
     // 1. (negative) Nothing edited yet: save issues zero requests and says so — the
@@ -333,7 +333,7 @@ test('a title typed in wp-admin reaches the committed blob, with slug unmoved an
     const blobsBeforeThisSave = blobsPosted.length;
     await page.click('#jamground-control-save');
     status = await waitForStatusChange(page, beforeSave);
-    assert.ok(status.startsWith(VOCAB.savedStagingUpdating),
+    assert.ok(status.startsWith(VOCAB.savedPreviewUpdating),
       `save should report the saved-and-updating wording, got: ${status}`);
 
     const newBlobs = blobsPosted.slice(blobsBeforeThisSave);

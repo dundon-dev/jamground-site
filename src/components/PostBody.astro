@@ -30,11 +30,22 @@
  * check, not a render-time serialiser), so the same settings are applied again rather than
  * imported. */
 import { mdastToBlocks } from '../lib/mdast-to-blocks.ts';
+import { resolveBlockMedia } from '../lib/media.ts';
 import BlockList from './BlockList.astro';
 
 type Props = { body: string };
 const { body } = Astro.props as Props;
 
-const blocks = mdastToBlocks(body);
+/* MEDIA IS RESOLVED HERE, and link resolution deliberately is not — the asymmetry is the point.
+ * A route resolves links before it hands blocks down, and this component is not on that path;
+ * the reason it does not need to be is that mdastToBlocks maps eight markdown constructs and
+ * none of them is a hero or a cta, so the prose path can provably never carry a link.
+ *
+ * It CAN carry an image. `![alt](media/name.jpg)` is one of those eight, so a post body is a
+ * second place a MediaRef enters the renderer, and it enters it here rather than in a route.
+ * Resolving it anywhere else would mean either passing a resolver down or letting Image.astro
+ * read the filesystem — and the whole reason this component exists is that it refuses to let a
+ * media path be resolved against the wrong root. */
+const blocks = resolveBlockMedia(mdastToBlocks(body));
 ---
 <BlockList blocks={blocks} />

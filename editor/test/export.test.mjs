@@ -62,7 +62,12 @@ test('quote block with no citation omits the field', () => {
   assert.deepEqual(wpBlockToContractBlock(block), { type: 'quote', text: 'A quoted line.' });
 });
 
-test('unordered list maps back with nested items', () => {
+// The nested list is the interesting half: it OMITS `ordered` rather than carrying `false`.
+// `List.ordered` is `.optional()` and `false` is core/list's registered default, so writing the
+// key would materialise an absent optional and the page would fail import.mjs's byte comparison —
+// see the three-form fixtures in roundtrip.test.mjs. The outer list keeps `ordered: true`, which
+// is information.
+test('a list maps back with nested items, and an unordered one omits `ordered` entirely', () => {
   const markup = serialize([
     createBlock('core/list', { ordered: true }, [
       createBlock('core/list-item', { content: 'top' }, [
@@ -73,11 +78,15 @@ test('unordered list maps back with nested items', () => {
     ]),
   ]);
   const [block] = parse(markup);
-  assert.deepEqual(wpBlockToContractBlock(block), {
+  const mapped = wpBlockToContractBlock(block);
+  assert.deepEqual(mapped, {
     type: 'list',
     ordered: true,
-    items: [{ text: 'top', list: { ordered: false, items: [{ text: 'nested' }] } }],
+    items: [{ text: 'top', list: { items: [{ text: 'nested' }] } }],
   });
+  // deepEqual would pass on an `ordered: undefined` key, which the canonical writer treats
+  // differently from an absent one. Assert the key is not there at all.
+  assert.equal('ordered' in mapped.items[0].list, false);
 });
 
 test('code block maps back to PLAIN TEXT — the marks in a sample are not read as marks', () => {
@@ -340,7 +349,7 @@ test('exportEntity writes a page as a whole YAML document, with blocks last and 
 // `slug === 'home'` and `[slug].astro` excludes that slug from the ordinary routes, so renaming
 // the home page in wp-admin does not move the homepage — it REMOVES it. read-posts.mjs takes
 // the slug straight from `post_name`, so the rename reaches export intact; the build then
-// fails, jamground-deploy never flips a failed build, and the editor's only signal is a staging
+// fails, jamground-deploy never flips a failed build, and the editor's only signal is a preview
 // site that never appears. Refusing here is where they can see it.
 test('exportEntity refuses to rename the home page, in editorial language', () => {
   const markup = serialize([createBlock('core/paragraph', { content: 'Hello.' })]);

@@ -1,7 +1,10 @@
 // Entry point for the shell - boots Playground cross-origin
 
-import { createBlock, serialize, parse, getBlockType } from '@wordpress/blocks';
+import { createBlock, serialize, parse, getBlockType, registerBlockType } from '@wordpress/blocks';
 import { registerCoreBlocks } from '@wordpress/block-library';
+import { addFilter } from '@wordpress/hooks';
+import { stripSupports } from './lib/block-supports.mjs';
+import { registerCustomBlocks } from './blocks/definitions.mjs';
 import { importPosts } from './lib/import.mjs';
 import { readPosts } from './lib/read-posts.mjs';
 import { writeSiteLinks } from './lib/site-links.mjs';
@@ -49,14 +52,35 @@ function generateBranchName() {
   return `content/change-${suffix}`;
 }
 
-// Expose the blocks API and register core blocks immediately
-// This ensures the API is available for pages that don't boot Playground
-try {
+// The host page's own block registry, set up once at module load so the API is available to
+// pages that never boot Playground.
+//
+// ORDER IS THE WHOLE POINT OF THIS FUNCTION EXISTING. `blocks.registerBlockType` is a
+// registration-time filter: a block already in the registry is not revisited, so layer 1 has to
+// be installed BEFORE registerCoreBlocks() and not merely somewhere above it in the file. It was
+// statement order inside a bare try block, which is a rule nobody can see they are breaking.
+//
+// This registry is the one blocks-to-wp.mjs builds the import tree in and export.mjs reads back,
+// and until now it had no layer 1 at all — so it registered `customClassName` support the editor
+// inside Playground did not, and the two produced different markup for the same block. That is
+// the disagreement `ac0a09f` treated a symptom of.
+function setUpHostRegistry() {
+  stripSupports(addFilter);
   registerCoreBlocks();
+  // The three jamground/* blocks, in the registry that has to READ them. This page renders no
+  // canvas, so they are registered with no `edit` and no React is pulled in for them: what
+  // blocks-to-wp.mjs needs is createBlock() accepting the attributes, and what export.mjs needs is
+  // getBlockType() naming them — which is also what makes attribute-guard.mjs's jamground/* arm an
+  // allowlist rather than an empty set that refuses the first attribute it sees.
+  registerCustomBlocks(registerBlockType);
+}
+
+try {
+  setUpHostRegistry();
 
   // registerCore wrapper function
   function registerCore(api) {
-    // registerCoreBlocks() has already been called above
+    // setUpHostRegistry() has already run above
     // This function is for compatibility with the contract
   }
 
@@ -92,6 +116,13 @@ const muPluginSource = typeof window !== 'undefined' && window.__muPluginSource
   ? window.__muPluginSource
   : '';
 
+// The block bundle - inlined from blocks/browser.mjs by build.mjs, the same way the mu-plugin
+// source is, and written into the WASM filesystem beside it. Playground's filesystem is not this
+// origin, so there is no URL the editor could fetch it from that this shell could have produced.
+const blockBundleSource = typeof window !== 'undefined' && window.__blockBundleSource
+  ? window.__blockBundleSource
+  : '';
+
 async function installMuPlugin(client) {
   if (!muPluginSource) {
     console.warn('[entry.mjs] No mu-plugin source to install');
@@ -100,6 +131,15 @@ async function installMuPlugin(client) {
   const root = await client.documentRoot;
   await client.mkdir(root + '/wp-content/mu-plugins');
   await client.writeFile(root + '/wp-content/mu-plugins/jamground.php', muPluginSource);
+
+  // Beside the mu-plugin, because the mu-plugin is what reads it: section 14 enqueues it by
+  // reading this file off disk, so the two travel together and there is no third place to keep in
+  // step. A missing bundle is reported by the mu-plugin rather than passed over — an inserter that
+  // is silently short is the failure mode this whole path is built to avoid.
+  if (!blockBundleSource) {
+    console.warn('[entry.mjs] No block bundle to install — jamground/* blocks will not be offered');
+  }
+  await client.writeFile(root + '/wp-content/mu-plugins/jamground-blocks.js', blockBundleSource);
 }
 
 // Every fresh WordPress install ships its own seed content: a "Hello world!" post, a "Sample
@@ -185,6 +225,14 @@ function handleOAuthCallback() {
 // rather than by assigning innerHTML: the only thing that ever reaches this line is our own
 // vocabulary plus a URL derived from the fork's own configuration, and it should stay that way
 // by construction rather than by everyone remembering.
+/* The standing line, written once at module scope rather than on any event. It says which parts
+ * of this screen are the site and which are settled elsewhere (09 §7), and that is true before
+ * sign-in, during a change, and after publishing — so there is no state it should react to and no
+ * control to dismiss it. It lives in VOCAB rather than in index.html so the vocabulary gate scans
+ * it with the rest. */
+const standingNote = document.getElementById('jamground-standing-note');
+if (standingNote) standingNote.textContent = VOCAB.standingNote;
+
 function showStatus(message, link) {
   const el = document.getElementById('jamground-status');
   if (!el) return;
@@ -432,11 +480,11 @@ window.jamgroundShell = (() => {
         });
         change = { branch, baseBranch: BASE_BRANCH, prNumber: pr.number, prNodeId: pr.node_id };
         window.jamgroundLastAction = { type: 'startAChange', branch, prNumber: pr.number };
-        // The earliest moment the staging address is known. The site behind it does not exist
+        // The earliest moment the preview address is known. The site behind it does not exist
         // yet — the box builds it from the webhook this action just caused, which takes about a
         // minute — so the message says so rather than handing over a link that 404s and letting
         // the editor conclude the feature is broken.
-        showStatus(`${VOCAB.changeStarted} — ${VOCAB.stagingPreparing}`, PREVIEW_URL_FOR(pr.number));
+        showStatus(`${VOCAB.changeStarted} — ${VOCAB.previewPreparing}`, PREVIEW_URL_FOR(pr.number));
         setStartAChangeEnabled(false);
         // AFTER every visible state change, and that order is load-bearing. The controls are
         // wired fire-and-forget, so anything awaited here opens a window in which the status
@@ -445,7 +493,7 @@ window.jamgroundShell = (() => {
         // "disabled after a successful start" assertion caught it.
         //
         // wp-admin's own links now have somewhere true to go for every entity, drafts
-        // included: the staging build renders those, and the published site does not.
+        // included: the preview build renders those, and the published site does not.
         await refreshSiteLinks({
           client: window.jamgroundClient, origin: PREVIEW_URL_FOR(pr.number), includeDrafts: true,
         });
@@ -507,7 +555,7 @@ window.jamgroundShell = (() => {
         // ref update below is what GitHub reports as `synchronize`, and that is the delivery the
         // box turns into a preview — so the one moment an editor is most likely to go and look is
         // this one, and showStatus has just wiped the link the change opened with.
-        showStatus(VOCAB.savedStagingUpdating, PREVIEW_URL_FOR(change.prNumber));
+        showStatus(VOCAB.savedPreviewUpdating, PREVIEW_URL_FOR(change.prNumber));
         // A slug that just moved moved on disk too, so the addresses have to catch up. The
         // origin is unchanged; this is the map, not the host.
         await refreshSiteLinks({
@@ -544,10 +592,10 @@ window.jamgroundShell = (() => {
         } else {
           // Sending for review moves no content, so nothing rebuilds — the consumer ignores
           // `ready_for_review` deliberately. The address is repeated rather than the update
-          // promised again: the staging site is still showing the last save, and an editor who
+          // promised again: the preview is still showing the last save, and an editor who
           // has just been told "sent for review" with no address is the one who goes looking for
           // a rebuild that was never going to happen.
-          showStatus(VOCAB.sentForReviewStagingAt, PREVIEW_URL_FOR(change.prNumber));
+          showStatus(VOCAB.sentForReviewPreviewAt, PREVIEW_URL_FOR(change.prNumber));
         }
         return result || { success: true };
       } catch (error) {
@@ -581,7 +629,7 @@ window.jamgroundShell = (() => {
           showStatus(VOCAB.publishedLiveAt, SITE_URL);
           change = null;
           setStartAChangeEnabled(true);
-          // The staging host is torn down with the change that owned it, so the addresses go
+          // The preview host is torn down with the change that owned it, so the addresses go
           // back to the published site — and drafts, which it does not render, go back out.
           await refreshSiteLinks({
             client: window.jamgroundClient, origin: SITE_URL, includeDrafts: false,

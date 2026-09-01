@@ -49,7 +49,7 @@ export const CONTENT_TREE_URL =
 export const CONTENT_BLOB_BASE =
   `https://raw.githubusercontent.com/${CONTENT_REPO}/${CONTENT_BRANCH}`;
 
-/** The staging site for one open change. Derived, like everything else here. */
+/** The preview for one open change. Derived, like everything else here. */
 export const PREVIEW_URL_FOR = previewUrlFor;
 
 /** The live site — where a change ends up once it is published. */

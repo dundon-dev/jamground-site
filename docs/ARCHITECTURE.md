@@ -25,13 +25,14 @@ so a compromised key exposes exactly the repository it was issued for and nothin
 Editors work in `wp-admin`. That `wp-admin` is not served by a PHP process anywhere — it is
 WordPress Playground, a WebAssembly build of WordPress that boots and runs entirely inside the
 visitor's own browser tab. `editor/entry.mjs` boots Playground from a blueprint and then writes
-one small file into Playground's in-memory filesystem: `editor/mu-plugin/jamground.php`. That
-file does three things, and the first is the oldest: it restricts the block inserter to the set
-the contract can represent and strips block features the contract has no field for. It also
-narrows the *surface* — the admin menu is Posts, Pages and Authors and nothing else, the
-dashboard's widgets and WordPress's own marketing and update notices are gone, and the rich-text
-toolbar offers only the four marks `InlineText` allows. And it rewrites WordPress's own links to
-the site (below). That file is the only `.php` in this entire repository, and a
+two files into Playground's in-memory filesystem: `editor/mu-plugin/jamground.php` and, beside
+it, the block bundle. The mu-plugin restricts the block inserter to the set the contract can
+represent and strips block features the contract has no field for. It also narrows the *surface*
+— the admin menu is Posts, Pages and Authors and nothing else, the dashboard's widgets and
+WordPress's own marketing and update notices are gone, patterns and the site editor are closed
+rather than merely unlisted, and the rich-text toolbar offers only the four marks `InlineText`
+allows. And it rewrites WordPress's own links to the site (below). That file is the only `.php` in
+this entire repository, and a
 conformance test fails the build if a second one ever appears outside `editor/`, or if any
 import from the site's own build graph ever reaches into `editor/` at all — the two do not share
 code at runtime, only the contract they both import.
@@ -44,7 +45,49 @@ because `import.mjs` sets `post_status` from the contract's own `status` and the
 true information about the entity; that an *edit* to it does not travel is a real remaining gap,
 and hiding the panel would conceal it rather than close it. `core/image` left the inserter for
 the harder version of the same reason: both mappers refuse it for want of a media path, so while
-it was offered an editor could do work that could not be saved anywhere.
+it was offered an editor could do work that could not be saved anywhere. `jamground/cta` is out
+for the same reason from the other direction: it is registered and round-trips, but its `link` is
+required and names another entity, and there is no picker for one yet.
+
+### The three custom blocks, and why they need a JavaScript bundle
+
+`hero`, `featureGrid` and `cta` have no core equivalent, and registering them in PHP alone does
+not work: PHP registration gives a `render_callback` and a REST presence and gives no `edit`
+component, so the block is registered and never appears in the inserter. There is no build step
+inside Playground either, so the bundle is built by `editor/build.mjs` with esbuild and carried in
+as the second file the shell writes.
+
+What that bundle renders is not a second template. The element structure and class names of every
+custom block live once, in `design/markup/<block>.ts`; the Astro component renders that
+description to HTML for the site and the `edit` component renders the same description through
+`createElement` for the canvas, so the two agree by construction rather than by a diff. The
+mu-plugin sends the design system — tokens, element defaults, the core `wp-block-*` selectors and
+the three block sheets — into the canvas as editor styles. `design/site.css` is deliberately not
+sent: it holds the page, and the canvas is not one.
+
+Sending it is only half of what makes a block in wp-admin carry the site's colours, type and
+spacing, and the sentence above used to stop there while the canvas was rendering in the wrong
+typeface. The canvas is also a WordPress theme's document — the blueprint pins no theme, so it gets
+whatever ships as default — and that theme's `theme.json` becomes a stylesheet the editor injects
+*after* ours. Element selectors on both sides at equal specificity, so every class rule in
+`design/blocks/*.css` won and every element default in `design/base.css` lost. The mu-plugin's
+section 3 therefore also drops the theme's `styles` through `wp_theme_json_data_theme`, keeping its
+`settings` and pointing the canvas's content width at `var(--jp-container)` — the site's own token,
+not a copy of its value.
+
+Three gates hold this in place, and they catch different things. `editor/test/fidelity.test.mjs`
+compares the Astro HTML with the editor's DOM and catches a block that looks wrong in the canvas;
+`editor/test/playwright/markup-parity.test.mjs` compares what the two block registries serialise
+and catches a save that cannot round-trip. No two of them subsume each other.
+
+The third belongs to the eight **core** blocks, whose markup is nobody's to author — it is
+WordPress's own `save()` output, reproduced by hand in `src/components/blocks/`. There is no shared
+function that could make those agree by construction, so the contract for them is a record:
+`design/markup/core.ts`. `test/blocks/core.test.mjs` holds Astro to it byte for byte and
+`editor/test/core-markup.test.mjs` holds WordPress's own `serialize()` to it once parsed, so Astro
+and WordPress agree transitively. The second of those is what notices a WordPress upgrade changing
+a core block's markup — before it existed, such an upgrade passed every gate here and split the
+site from the editor in silence.
 
 ### wp-admin's own links name the site, not the WASM instance
 

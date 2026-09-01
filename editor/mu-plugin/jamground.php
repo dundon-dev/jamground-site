@@ -10,12 +10,14 @@
  * control — Playground cannot enforce authorization, so least privilege is
  * enforced entirely at the GitHub layer.
  *
- * Thirteen hooks, in this order. The first five narrow what can be WRITTEN; the rest narrow
+ * Fifteen hooks, in this order. The first five narrow what can be WRITTEN; the rest narrow
  * what is SHOWN, and the last points WordPress's own site links at the site:
  *   0. init                        — register the jamground_author post type
  *   1. allowed_block_types_all     — the inserter allowlist, per post type
  *   2. register_block_type_args    — strips supports before registration
- *   3. enqueue_block_assets        — shared block stylesheet
+ *   3. enqueue_block_assets / block_editor_settings_all / wp_theme_json_data_theme
+ *                                 — the design system in the canvas, and the theme's own
+ *                                   styles out of its way
  *   4. admin_init                  — suppress the welcome guide
  *   5. admin_menu                  — remove the menus nothing here can act on
  *   6. admin_bar_menu              — remove the nodes that lead out of the product
@@ -24,10 +26,16 @@
  *   9. admin_head                  — remove the help tabs
  *  10. enqueue_block_editor_assets — the inline-format allowlist (the file's only JS)
  *  11. init                        — drop the panels and taxonomies nothing reads back
- *  12. post_link / preview_post_link / admin_bar_menu — site links point at the site
+ *  12. after_setup_theme / init / load-* — close the rooms behind the doors section 5 took
+ *                                   off the menu: patterns, the site editor, synced patterns
+ *  13. post_link / preview_post_link / admin_bar_menu — site links point at the site
+ *  14. enqueue_block_editor_assets — the jamground/* block bundle
  *
- * No jamground/* block is registered here: this release ships none, so the allowlist below
- * is core blocks only.
+ * THE THREE jamground/* BLOCKS ARE NOT REGISTERED IN THIS FILE, and that is a finding rather
+ * than a layout choice. PoC-7d (03 §Custom-blocks) registered one in PHP alone and got a
+ * registered block type that never appeared in the inserter: PHP registration gives a
+ * render_callback and a REST presence, and gives no `edit` component. They are registered by the
+ * JavaScript bundle section 14 enqueues, which the shell writes in beside this file.
  */
 
 // 0. The author post type.
@@ -101,6 +109,18 @@ add_action('init', function () {
 // here the moment that path exists — and nowhere else has to change for it to come back,
 // because attribute-guard.mjs already allows its three attributes.
 //
+// `jamground/cta` IS NOT AMONG THEM EITHER, FOR EXACTLY THAT REASON, and this is the one place
+// the three custom blocks are not treated alike. All three are registered by section 14's bundle,
+// all three round-trip, and all three render in the canvas — so a page that already carries a
+// `cta` opens, shows it, and saves it back unchanged. What `cta` has and the other two do not is
+// a REQUIRED field with no control: `Cta.link` is `{ label, ref }`, where `ref` names another
+// entity and there is no picker for one yet. A `cta` inserted from this menu could not be saved,
+// which is the `core/image` defect with a different noun. `hero` and `feature-grid` have controls
+// for every required field they carry, so they are offered.
+//
+// The moment an entity picker exists, this is a one-line change: nothing else distinguishes the
+// three, and editor/lib/attribute-guard.mjs already allowlists all of them by asking the registry.
+//
 // The signature is `10, 2` rather than `10, 0` so the filter receives the block editor's
 // context and can answer differently per type. `$context->post` is null in the contexts that
 // have no post at all (the site and widget editors), which is why it is checked before use.
@@ -117,11 +137,36 @@ add_filter('allowed_block_types_all', function ($allowed_block_types, $block_edi
         'core/code',
         'core/table',
         'core/separator',
+        'jamground/hero',
+        'jamground/feature-grid',
     ];
 }, 10, 2);
 
 // 2. Strip supports the contract cannot express, before registration — so the controls
 // never appear, rather than appearing and being refused at save time.
+//
+// THIS LIST IS THE PHP HALF OF ONE LIST. The other half is `STRIPPED_SUPPORTS` in
+// editor/lib/block-supports.mjs, which applies the same twelve to the HOST PAGE's registry —
+// the one blocks-to-wp.mjs builds the import tree in and export.mjs reads back. This filter
+// cannot reach that registry: `register_block_type_args` fires inside WP_Block_Type_Registry,
+// which exists only in here. editor/test/block-supports.test.mjs reads this array back out of
+// this file and asserts the two agree, because two copies of a list like this is a defect
+// waiting for someone to edit one of them.
+//
+// `className` WAS IN THIS LIST AND HAS BEEN TAKEN OUT. It is not the same thing as
+// `customClassName` and the two are easy to confuse:
+//
+//   className        the block's own generated class — `wp-block-heading`, `wp-block-list`,
+//                    `wp-block-separator`, `wp-block-table`
+//   customClassName  the "Additional CSS class(es)" field in the Advanced panel
+//
+// Only the second is a control that can produce work the contract has no field for. The first
+// is markup the contract FREEZES — `11 §4c` specifies `<hN class="wp-block-heading">`, the Astro
+// components emit it, and test/blocks/core.test.mjs asserts they do. With `className => false`
+// here, this editor re-saved that heading as a bare `<h2>` while the import path had written the
+// class, which is the disagreement `ac0a09f` was treating one symptom of: an untouched heading
+// arrived carrying a whole schema of undefined attributes because its markup no longer matched
+// its own `save()`. Removing it from this list is the cause fixed rather than the symptom.
 add_filter('register_block_type_args', function ($args) {
     $args['supports'] = array_merge($args['supports'] ?? [], [
         'color' => false,
@@ -129,7 +174,6 @@ add_filter('register_block_type_args', function ($args) {
         'spacing' => false,
         'border' => false,
         'shadow' => false,
-        'className' => false,
         'customClassName' => false,
         'anchor' => false,
         'align' => false,
@@ -141,16 +185,112 @@ add_filter('register_block_type_args', function ($args) {
     return $args;
 }, 10, 1);
 
-// 3. The shared block stylesheet. Registered
-// with a false source and enqueued on enqueue_block_assets so it loads inside the editor
-// canvas as well as the front end preview; a custom property is set so a test can observe
-// that this hook actually ran.
+// 3. The design system, in the canvas — the other half of ADR-0013. The markup contract makes
+// both renderers emit the same elements and classes; this is what makes one stylesheet reach
+// both, so a block in wp-admin is coloured, set and spaced the way the site will render it.
+//
+// THREE PARTS, and the third is not optional: getting the stylesheet into the canvas is not the
+// same as its rules taking effect there. See `wp_theme_json_data_theme` at the end of this
+// section for what was overriding them and why the answer is subtractive.
+//
+// TWO MECHANISMS, AND THEY ARE NOT INTERCHANGEABLE. The difference is which document each
+// reaches, and getting it wrong restyles wp-admin itself.
+//
+//   enqueue_block_assets      the canvas AND the admin page around it, and the front end
+//   block_editor_settings_all the canvas only, scoped by WordPress to .editor-styles-wrapper
+//
+// The marker goes through the first because that is what it has always done and what
+// mu-plugin.test.mjs observes on the canvas `body`; it is one custom property and it damages
+// nothing. The design system goes through the second, because it is not scoped and cannot be:
+// `body { font-family }`, `h1`–`h4`, `p`, `a` and `:focus-visible` are element defaults, so sent
+// through enqueue_block_assets they would restyle every heading, paragraph and link in wp-admin.
+// Editor styles are WordPress's own answer to exactly this, and the scoping is theirs rather than
+// ours to maintain.
+//
+// design/site.css IS DELIBERATELY NOT HERE. It holds the page: `.site-header`, `.site-footer`,
+// `.site-container`, and a `body` that is `min-height: 100vh; display: flex` — a layout assuming
+// header/main/footer children, which the canvas does not have and wp-admin's own body would be
+// laid out by. The split between the two files is what makes that structural instead of a rule
+// somebody has to remember. See either file's header.
+//
+// THE CSS IS SUBSTITUTED AT BUILD TIME by editor/build.mjs, which reads design/tokens.css,
+// design/base.css and the three design/blocks/*.css and escapes the result for the PHP
+// single-quoted literal below — two characters, backslash and apostrophe, and no others. A
+// heredoc was the alternative and is worse: a nowdoc terminator appearing in the CSS would end
+// the string silently, and CSS is a file other people edit.
 add_action('init', function () {
     wp_register_style('jamground-blocks', false);
     wp_add_inline_style('jamground-blocks', 'body{--jp-mu-plugin:present;}');
 });
 add_action('enqueue_block_assets', function () {
     wp_enqueue_style('jamground-blocks');
+});
+
+add_filter('block_editor_settings_all', function ($settings) {
+    $css = '__JAMGROUND_CANVAS_CSS__';
+
+    // The unsubstituted placeholder means the shell shipped a mu-plugin the build never
+    // processed. Said out loud, because the symptom otherwise is a canvas that looks like
+    // unstyled wp-admin — which reads as "the design system does not work" rather than as
+    // "the design system never arrived".
+    if ($css === '__JAMGROUND' . '_CANVAS_CSS__' || $css === '') {
+        $settings['styles'][] = ['css' => 'body::before{content:"jamground: canvas CSS was never substituted by editor/build.mjs";display:block;background:#fee;color:#900;padding:8px;font:12px monospace;}'];
+        return $settings;
+    }
+
+    $settings['styles'][] = ['css' => $css];
+    return $settings;
+});
+
+// ARRIVING IS NOT WINNING, and until this filter existed only the first was true.
+//
+// The canvas is a WordPress THEME'S document as well as ours. The blueprint pins no theme, so it
+// gets whatever WordPress ships as default — Twenty Twenty-Five at wp 7.1 — and that theme's
+// theme.json is compiled into a global-styles stylesheet the editor injects into the canvas
+// iframe AFTER the one `block_editor_settings_all` carries. Both are bare element selectors at
+// equal specificity, so the later one wins, and the split fell exactly along the kind of selector:
+//
+//   design/blocks/*.css   .jp-hero, .jp-cta__link, .jp-feature-grid__item   CLASS   won
+//   design/base.css       body, h1–h4, p, a                                 ELEMENT lost
+//
+// So the canvas drew the right panels, radii, accent and shadows in the WRONG TYPE: Manrope 400 at
+// 21.3px where the site sets its own stack at 700 and 17px, plus a different heading colour and
+// tracking. 62 of the computed properties across the markup contract's twelve elements differed
+// from the built page; with this filter, 2 do, and both are the editor's own gap between two
+// blocks — canvas affordance, not anything a renderer emits. That is not a near miss — `09 §7`
+// excuses the page AROUND a block, and this was inside it, in the one respect the editor's own
+// standing note promises ("their colours, type and spacing are the site's",
+// editor/lib/vocabulary.mjs).
+//
+// THE FIX IS NOT MORE SPECIFICITY. Raising base.css's selectors would win this round and lose the
+// next one to whatever the next default theme declares, and it would make a stylesheet that is
+// shared with the SITE carry weight it only needs in wp-admin. Removing the competing declarations
+// is the same move section 12 makes on patterns and the site editor: close the room, do not argue
+// with it.
+//
+// STYLES GO, SETTINGS STAY, and the asymmetry is load-bearing. `styles` is the half that produces
+// competing CSS. `settings` is the half the editor's own UI reads — the presets, `appearanceTools`,
+// and the layout width that gives the canvas a content column; dropped along with the rest, the
+// post title ends up flush against the frame and every block runs the full width of the pane.
+//
+// THE WIDTH IS THE SITE'S OWN TOKEN, not a copy of its value. `--jp-container` is declared once, in
+// design/tokens.css, which section 3 above sends into this same document — so the width WordPress
+// lays the canvas out to and the width the three block sheets cap themselves at are one
+// declaration rather than two that can drift. WordPress emits it into
+// `--wp--style--global--content-size` verbatim; a `var()` there resolves like any other.
+//
+// `wp_theme_json_data_default` IS DELIBERATELY LEFT ALONE. Core's own theme.json is where the
+// `--wp--preset--*` custom properties the editor UI reads come from, and — measured, not assumed —
+// it contributes no typography that competes with base.css.
+add_filter('wp_theme_json_data_theme', function ($theme_json) {
+    $data = $theme_json->get_data();
+    $settings = $data['settings'] ?? [];
+    $settings['layout'] = ['contentSize' => 'var(--jp-container)', 'wideSize' => 'var(--jp-container)'];
+
+    return new WP_Theme_JSON_Data([
+        'version'  => $data['version'] ?? 3,
+        'settings' => $settings,
+    ], 'theme');
 });
 
 // 4. Suppress the welcome guide. An editor whose familiarity is the product should not
@@ -188,7 +328,7 @@ add_action('admin_menu', function () {
 
 // 6. The admin bar: remove the nodes that lead out of the product.
 //
-// `site-name` is deliberately absent from this list. It is a link to the site, so section 12
+// `site-name` is deliberately absent from this list. It is a link to the site, so section 13
 // owns it — it gets a real address rather than being taken away.
 //
 // PRIORITY 99999, AND THE NUMBER IS LOAD-BEARING. Most of WordPress's nodes are added between
@@ -334,7 +474,78 @@ add_action('init', function () {
     unregister_taxonomy_for_object_type('post_tag', 'post');
 }, 11);
 
-// 12. Site links point at the site.
+// 12. The rooms behind the doors section 5 took off the menu.
+//
+// Removing an entry from `admin_menu` removes the ENTRY. Every room it led to is still there:
+// `themes.php` and `site-editor.php` answer on their own URLs, the site editor's own UI links
+// on to Styles, Templates, Patterns and Navigation, the inserter still offers core's and the
+// theme's pattern libraries, and synced patterns still have a post type whose rows live in a
+// database that is deleted on the next reload. Each of those is exactly the defect section 5
+// names — an editor who follows one either changes nothing, or changes something that is thrown
+// away — and hiding a menu entry closed none of them.
+//
+// UNLIKE SECTION 5, THIS CLOSES ROUTES, and the difference is deliberate rather than
+// inconsistent. Section 5 leaves `edit.php` and `post.php` reachable because the Playwright
+// suite navigates to them by URL; taking those would take the tests with them. Nothing
+// navigates to a theme or site-editor route, here or in the suite, because nothing in this
+// product has any business on one.
+//
+// PATTERNS ARE CLOSED THREE TIMES, because there are three ways they arrive and removing one
+// leaves the other two. `core-block-patterns` is theme support and covers only core's own;
+// `should_load_remote_block_patterns` covers the pattern directory fetched over the network,
+// which in Playground is a CORS-proxied request for markup the contract could not represent
+// anyway; and the registry sweep covers the active theme's `patterns/` directory, which neither
+// of the first two touches. A pattern is a pre-built layout of blocks — several of them use
+// blocks the contract has no field for, so inserting one produces work that is refused at save.
+add_action('after_setup_theme', function () {
+    remove_theme_support('core-block-patterns');
+    remove_theme_support('block-templates');   // the site editor, and the post editor's Template panel
+}, 11);
+
+add_filter('should_load_remote_block_patterns', '__return_false');
+
+add_action('init', function () {
+    // Whatever survived the two above — the theme's own patterns register on `init`, so this
+    // runs after them at 20 rather than alongside section 11 at 11.
+    if (class_exists('WP_Block_Patterns_Registry')) {
+        $patterns = WP_Block_Patterns_Registry::get_instance();
+        foreach ($patterns->get_all_registered() as $pattern) {
+            $patterns->unregister($pattern['name']);
+        }
+    }
+    if (class_exists('WP_Block_Pattern_Categories_Registry')) {
+        $categories = WP_Block_Pattern_Categories_Registry::get_instance();
+        foreach ($categories->get_all_registered() as $category) {
+            $categories->unregister($category['name']);
+        }
+    }
+
+    // Synced patterns (`wp_block`). NOT `unregister_post_type()`: core registers it with
+    // `_builtin => true`, and unregistering a built-in type returns a WP_Error and changes
+    // nothing. Taking its UI and its REST presence is what removes it from the inserter's
+    // Patterns tab, the admin, and the data layer that feeds both.
+    $wp_block = get_post_type_object('wp_block');
+    if ($wp_block) {
+        $wp_block->show_ui = false;
+        $wp_block->show_in_menu = false;
+        $wp_block->show_in_rest = false;
+        $wp_block->show_in_admin_bar = false;
+        $wp_block->public = false;
+    }
+}, 20);
+
+// The routes themselves. A redirect rather than `wp_die()`: an editor who lands on one by an
+// old link or a stray click should end up somewhere they can work, not on an error page telling
+// them off for a URL they did not type.
+foreach (['themes.php', 'theme-install.php', 'theme-editor.php', 'site-editor.php', 'customize.php'] as $jamground_closed_screen) {
+    add_action("load-{$jamground_closed_screen}", function () {
+        wp_safe_redirect(admin_url('edit.php?post_type=page'));
+        exit;
+    });
+}
+unset($jamground_closed_screen);
+
+// 13. Site links point at the site.
 //
 // WordPress resolves "View Page", "Preview" and the admin bar's site name through
 // `home_url()`, which here is the Playground scoped origin with plain `?p=` permalinks. Every
@@ -407,7 +618,7 @@ add_filter('post_type_link', function ($url, $post) {
 // Preview is the one link whose WORD this cannot honour, and it is worth being exact about
 // why. WordPress's Preview means "see your unsaved draft": the shell cannot know about unsaved
 // edits at all — it cannot reach Gutenberg's DOM across the Playground origin boundary — and
-// the staging site is rebuilt from the save, not from typing. So this address shows the last
+// the preview is rebuilt from the save, not from typing. So this address shows the last
 // SAVED state. It is pointed at the same real place as the permalink because that is the
 // closest true thing, and the shell's status line is where the caveat is said in words.
 // With nothing to show, it returns empty rather than a WASM address dressed up as the site.
@@ -433,3 +644,52 @@ add_action('admin_bar_menu', function ($bar) {
     }
     $bar->remove_node('dashboard');  // "Dashboard", whose menu entry section 5 removed
 }, 100000);  // after section 6, for the reason given there
+
+// 14. The jamground/* block bundle.
+//
+// The three custom blocks are registered HERE and nowhere else, by JavaScript. PoC-7d
+// (03 §Custom-blocks) is unambiguous about why: registering `jamground/hero` in PHP alone
+// produced a registered block type that NEVER APPEARED IN THE INSERTER, because PHP registration
+// gives a render_callback and a REST presence and gives no `edit` component. A bundle calling
+// `wp.blocks.registerBlockType` with `save: () => null` made it appear immediately.
+//
+// The file is written into the WASM filesystem beside this one by the shell (entry.mjs), because
+// there is no build step inside Playground and Playground's filesystem is not the shell's origin.
+//
+// AN INLINE SCRIPT ON A REGISTERED-BUT-SOURCELESS HANDLE, rather than a `src` URL. Registering a
+// handle with `src => false` and hanging the code off it as an inline script takes its ordering
+// from the dependency graph while leaving nothing for the browser to fetch — no URL to get wrong,
+// no MIME type to be served incorrectly, no request that can 404 inside a WASM filesystem.
+//
+// The four dependencies are the four globals the bundle reads. They are declared because that is
+// what they are, NOT because this screen would break without them: measured, removing
+// wp-block-editor from this list changes nothing, because the block editor screen enqueues all
+// four itself before anything of ours runs. So the browser suite cannot tell a correct list here
+// from an incomplete one, and the thing that would actually name a missing global is the
+// precondition check at the top of blocks/browser.mjs.
+//
+// EVERY FAILURE HERE IS THE SAME SYMPTOM: an inserter that is quietly two blocks short. So a
+// missing bundle is not passed over — it says so, in the console, naming the file it looked for.
+add_action('enqueue_block_editor_assets', function () {
+    $bundle = __DIR__ . '/jamground-blocks.js';
+    $source = is_readable($bundle) ? file_get_contents($bundle) : '';
+
+    wp_register_script(
+        'jamground-blocks',
+        false,
+        ['wp-blocks', 'wp-element', 'wp-block-editor', 'wp-components'],
+        null,
+        true
+    );
+    wp_enqueue_script('jamground-blocks');
+
+    if ($source === '' || $source === false) {
+        wp_add_inline_script('jamground-blocks', sprintf(
+            'console.error(%s); window.__jamgroundBlocks = { error: "bundle missing" };',
+            wp_json_encode('jamground blocks: no bundle at ' . $bundle . ' — the shell did not write it, so no jamground/* block is registered and the inserter is short by two')
+        ));
+        return;
+    }
+
+    wp_add_inline_script('jamground-blocks', $source);
+});

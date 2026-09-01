@@ -361,6 +361,82 @@ test('round trip: a seed page is byte-identical through write(x, Page)', () => {
   assert.equal(exported.startsWith('---'), false, 'a page carries no frontmatter fence');
 });
 
+/* AN UNORDERED LIST OMITS `ordered`, AND THAT IS THE FORM THAT HAS TO SURVIVE.
+ *
+ * `List.ordered` is `.optional()` at all three levels and this contract carries no `.default()`
+ * anywhere (blocks.ts:101-107), so the canonical writer omits an unordered list's `ordered`
+ * entirely (02 §10: "an absent optional field is omitted entirely"). export.mjs used to write
+ * `ordered: !!attributes.ordered` unconditionally, which materialised that absent optional: a page
+ * authored the way the contract says came back with `ordered: false`, failed import.mjs's byte
+ * comparison, and was HELD BACK at boot. It built fine and was uneditable, which is the failure
+ * mode nothing else here would have caught — the build never reads this path and the browser suite
+ * needs a page that already trips it.
+ *
+ * Three forms, and only two of them can round-trip, because import throws the distinction away:
+ * `createBlock('core/list', {})` and `createBlock('core/list', { ordered: false })` are the same
+ * block, `false` being core/list's registered default. So the contract has to pick one written form
+ * for "unordered", and it picked absent. The third case is asserted below rather than left implicit,
+ * because `ordered: false` is still schema-legal and still passes `check:seed` — it is canonical
+ * and un-round-trippable at once, and a reader deserves to find that out from a test. */
+
+const LIST_PAGE = `id: 01M143VEG04JRXAX5JYES4JXZ0
+translationOf: 01M143VFF8TN0D6FNX3S6M5T49
+locale: en-US
+slug: lists
+title: Lists
+status: published
+publishedAt: '2026-08-28T12:00:00Z'
+updatedAt: '2026-08-28T12:00:00Z'
+blocks:
+  - type: list
+    items:
+      - text: one
+      - text: two
+        list:
+          items:
+            - text: deep
+  - type: list
+    ordered: true
+    items:
+      - text: first
+      - text: second
+`;
+
+const exportPage = (source) => {
+  const parsed = parseEntity('page', '/content/pages/en-US/lists.yaml', source);
+  return exportEntity({
+    kind: 'page',
+    api,
+    markup: blocksToMarkup(api, parsed.blocks),
+    frontmatter: parsed.frontmatter,
+    previousSlug: parsed.frontmatter.slug,
+    updatedAt: parsed.frontmatter.updatedAt,
+  });
+};
+
+test('round trip: an unordered list that omits `ordered` is byte-identical, nested one included', () => {
+  const exported = exportPage(LIST_PAGE);
+  const diffOffset = findFirstDiff(LIST_PAGE, exported);
+  assert.equal(
+    diffOffset, -1,
+    diffOffset >= 0
+      ? `First differing byte at offset ${diffOffset}: original=${JSON.stringify(LIST_PAGE[diffOffset])} vs exported=${JSON.stringify(exported[diffOffset])}`
+      : 'bytes should be identical'
+  );
+  // Positively: the key is absent, not merely equal. A writer that emitted `ordered: false` in
+  // both places would satisfy a naive equality on a fixture that also said `false`.
+  assert.equal(exported.includes('ordered: false'), false, '`ordered: false` should never be written');
+  assert.equal(exported.match(/ordered: true/g).length, 1, 'the ordered list keeps its `ordered: true`');
+});
+
+test('round trip: `ordered: false` in a source file does NOT survive, and that is why it is not written', () => {
+  const withFalse = LIST_PAGE.replace('  - type: list\n    items:', '  - type: list\n    ordered: false\n    items:');
+  assert.notEqual(withFalse, LIST_PAGE, 'the fixture edit should have applied');
+  // Schema-legal, canonical, and still refused by the admission gate — the trap in the other
+  // direction, pinned here so nobody re-introduces `ordered: false` into content to "be explicit".
+  assert.notEqual(exportPage(withFalse), withFalse);
+});
+
 test('round trip: the post serialiser cannot reproduce a page', () => {
   const parsed = parseEntity('page', '/content/pages/en-US/home.yaml', SEED_PAGE);
   const markup = blocksToMarkup(api, parsed.blocks);
