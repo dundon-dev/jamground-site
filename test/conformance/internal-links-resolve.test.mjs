@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { buildToTempDir, listFiles, cleanup } from './lib/build.mjs';
 import { deriveExpectedRoutes } from './lib/derive-routes.mjs';
 import { extractHrefs, classifyHref, routeFileFor } from './lib/internal-links.mjs';
+import { navRefHrefs } from './lib/nav-links.mjs';
 
 /* node --test runs test FILES as separate processes and every conformance file builds its
  * own dist/, so there is no build to share across files — this file builds once, at module
@@ -57,23 +58,39 @@ test('every internal href in dist/ resolves to a route the build generated', () 
 });
 
 /* Against a false green. A regex that silently stops matching would make the assertion above
- * pass over nothing at all — the failure mode that makes a gate worse than no gate. These are
- * three anchors the seed content must produce, one per way a link can be authored: the
- * primary-navigation item proves a `ref:` in navigation/en-US/primary.yaml resolved to a real
- * page, the blog-index item proves a `route:` did — the target no `ref:` can name, because the
- * blog index is generated and has no entity — and the post link proves the index lists the one
- * seed post.
+ * pass over nothing at all — the failure mode that makes a gate worse than no gate.
  *
- * The `route:` anchor is worth its own line rather than being folded into the first. Together
- * with the assertion above — every internal href must be a route deriveExpectedRoutes() derived
- * from content/ — it is the end-to-end proof of the whole named-route path: the schema accepted
- * it, links.ts resolved it, SiteHeader rendered it, and it landed on a route that exists. */
+ * Two jobs, deliberately separated, because folding them together is how the first one stopped
+ * being true. `all.length > 0` and the hermetic plants below are what prove the EXTRACTOR works;
+ * they depend on no content and cannot be edited away. The `ref:`/`route:` assertions prove the
+ * whole named-route path end to end: the schema accepted it, links.ts resolved it, SiteHeader
+ * rendered it, and it landed on a route that exists.
+ *
+ * THE `ref:` HALF NAMES NO SLUG AND ALSO DOES NOT GUESS AT ONE. It used to require the literal
+ * `/en-us/example/`, which put a fact about the CONTENT repository into a gate in the CODE
+ * repository — renaming a page or reordering the menu, editorial acts in a repository this one is
+ * deliberately separate from, failed the build here. Asserting the href's SHAPE instead is worse
+ * rather than better: `hero.cta` and `cta.link` resolve to exactly the same `/{locale}/{slug}/`
+ * shape from inside a page body, so the first CTA pointing at a page would let it pass over a menu
+ * with no links in it at all. So navRefHrefs() resolves the navigation through links.ts's own
+ * `buildLinkIndex`/`navHref` and this asserts the build emitted each result. */
 test('the extractor actually found the seed content\'s internal links', () => {
   const all = emitted.flatMap(({ hrefs }) => hrefs);
   assert.ok(all.length > 0, 'no anchors found in dist/ at all — the extractor is broken');
 
   const internal = all.filter((href) => classifyHref(href).kind === 'internal');
-  assert.ok(internal.includes('/en-us/example/'), 'primary navigation must link to the example page');
+
+  // Every `ref:` the navigation declares must appear as an anchor the build actually emitted.
+  // navRefHrefs() resolves them through links.ts itself, so this compares the production resolver's
+  // answer against the production output rather than restating either. Vacuous only if no
+  // navigation declares a ref: at all, which is a legitimate menu and not a silent pass — the
+  // extractor's own proof is `all.length > 0` above and the plants below.
+  for (const href of navRefHrefs()) {
+    assert.ok(
+      internal.includes(href),
+      `navigation resolves a ref: to ${href}, but no anchor in dist/ points there`,
+    );
+  }
   assert.ok(internal.includes('/en-us/blog/'), 'primary navigation must link to the blog index');
   assert.ok(internal.includes('/en-us/blog/example-post/'), 'the blog index must link to the example post');
 });
