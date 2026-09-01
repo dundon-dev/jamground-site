@@ -1,20 +1,18 @@
 ---
-/* jamground/feature-grid. Dynamic block; see Hero.astro for the fidelity note.
- * `icon` (FeatureGrid's per-item field) carries no markup contract —
- * the table names only `__item`, `__heading`, `__body` — so it is not rendered here; adding
- * one is a markup-contract change, not something this component may decide on its own. */
+/* jamground/feature-grid. Dynamic block; see Hero.astro for why the structure lives in
+ * design/markup/ rather than here, and for the harness cost of the runtime import.
+ *
+ * `icon` (FeatureGrid's per-item field) carries no markup contract — the table names only
+ * `__item`, `__heading`, `__body` — so it reaches no element. That decision now lives in
+ * design/markup/feature-grid.ts, which means the editor's `edit` cannot quietly render one
+ * either: adding an icon is a markup-contract change, made once, for both renderers. */
 import type { z } from 'zod';
 import type { Block } from '../../contract/blocks.ts';
+import { toHtml } from '../../../design/markup/node.ts';
+import { featureGrid } from '../../../design/markup/feature-grid.ts';
 
 type Props = Omit<Extract<z.infer<typeof Block>, { type: 'featureGrid' }>, 'type'>;
 
 const { columns, items } = Astro.props as Props;
 ---
-<section class="jp-feature-grid" data-columns={columns}>
-  {items.map((item) => (
-    <div class="jp-feature-grid__item">
-      <h3 class="jp-feature-grid__heading">{item.heading}</h3>
-      <p class="jp-feature-grid__body">{item.body}</p>
-    </div>
-  ))}
-</section>
+<Fragment set:html={toHtml(featureGrid({ columns, items }))} />

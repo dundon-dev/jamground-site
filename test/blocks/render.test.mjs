@@ -44,6 +44,8 @@ const RUNTIME_DEP_PATHS = Object.fromEntries(
 );
 
 
+const MARKUP_DIR = fileURLToPath(new URL('../../design/markup/', import.meta.url));
+
 function compile(relPath) {
   const sourcePath = fileURLToPath(new URL(relPath, COMPONENTS_DIR));
   const source = readFileSync(sourcePath, 'utf8');
@@ -71,6 +73,13 @@ function compile(relPath) {
   for (const [pkg, absPath] of Object.entries(RUNTIME_DEP_PATHS)) {
     code = code.replaceAll(`from "${pkg}"`, `from "${absPath}"`);
   }
+  /* design/markup/*.ts, the shared markup contract the three custom blocks render (ADR-0013,
+   * 09 §5). Relative in src/, wrong from the temp directory — one rule for the whole directory,
+   * which holds because nothing in design/markup/ imports anything outside itself. */
+  code = code.replace(
+    /from "(?:\.\.\/)+design\/markup\/([a-z-]+)\.ts"/g,
+    (_m, name) => `from "${MARKUP_DIR}${name}.ts"`,
+  );
   return code;
 }
 

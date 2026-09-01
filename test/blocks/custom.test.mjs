@@ -39,6 +39,15 @@ const BLOCKS_DIR = new URL('../../src/components/blocks/', import.meta.url);
  * would not resolve. */
 const ASTRO_RUNTIME = fileURLToPath(import.meta.resolve('astro/compiler-runtime'));
 
+/* design/markup/*.ts is the shared markup contract — one node description per block type,
+ * rendered to HTML here and through createElement by the block's `edit` (ADR-0013, 09 §5). The
+ * components import it by a relative path that is correct in src/ and wrong from the temp
+ * directory this harness compiles into, so rewrite it to the real absolute path. One rule covers
+ * the whole directory, which is why nothing in design/markup/ imports anything outside itself. */
+const MARKUP_DIR = fileURLToPath(new URL('../../design/markup/', import.meta.url));
+const rewriteMarkupImports = (code) =>
+  code.replace(/from "(?:\.\.\/)+design\/markup\/([a-z-]+)\.ts"/g, (_m, name) => `from "${MARKUP_DIR}${name}.ts"`);
+
 async function compileComponent(name) {
   const sourcePath = fileURLToPath(new URL(name, BLOCKS_DIR));
   const source = readFileSync(sourcePath, 'utf8');
@@ -52,7 +61,7 @@ async function compileComponent(name) {
   if (error) throw new Error(`${name} failed to compile: ${error.text}`);
   const dir = mkdtempSync(join(tmpdir(), 'jamground-block-'));
   const file = join(dir, 'component.ts');
-  writeFileSync(file, result.code);
+  writeFileSync(file, rewriteMarkupImports(result.code));
   try {
     const mod = await import(pathToFileURL(file).href);
     return mod.default;
