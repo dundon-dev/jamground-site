@@ -72,11 +72,12 @@ const norm = (html) => html.replace(/>\s+</g, '><').trim();
 /* The record both halves of the chain read. See its header, and this file's. */
 const { CORE_CASES, CORE_TYPES } = await import('../../design/markup/core.ts');
 
-for (const { name, component, block, markup } of CORE_CASES) {
+for (const { name, component, block, props, markup } of CORE_CASES) {
   test(name, async () => {
-    /* `type` is the contract's discriminant and is not a component prop; everything else is. */
-    const { type, ...props } = block;
-    assert.equal(norm(await render(component, props)), markup);
+    /* `type` is the contract's discriminant and is not a component prop; everything else is —
+     * except where the row says otherwise, which is the `image` rows and their resolved `src`. */
+    const { type, ...fields } = block;
+    assert.equal(norm(await render(component, props ?? fields)), markup);
   });
 }
 

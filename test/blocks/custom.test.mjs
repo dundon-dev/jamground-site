@@ -84,7 +84,7 @@ test('hero — full props render all four contract classes', async () => {
   const html = norm(await render('Hero.astro', {
     heading: 'Pricing & plans',
     body: 'No setup fees.',
-    media: { ref: 'media/hero-a1b2c3.jpg', alt: 'A team at work' },
+    media: { src: 'media/hero-a1b2c3.jpg', alt: 'A team at work' },
     cta: { label: 'Get started', href: '/en-us/pricing/' },
   }));
   assert.equal(
@@ -109,7 +109,7 @@ test('hero — minimal props (heading only) omit every optional element', async 
 test('hero — decorative media gets an empty alt, not the (absent) alt text', async () => {
   const html = norm(await render('Hero.astro', {
     heading: 'X',
-    media: { ref: 'media/bg.jpg', decorative: true },
+    media: { src: 'media/bg.jpg', decorative: true },
   }));
   assert.match(html, /<img class="jp-hero__media" src="media\/bg\.jpg" alt(?:=""|[ >])/);
 });

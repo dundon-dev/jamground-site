@@ -45,6 +45,20 @@ const RUNTIME_DEP_PATHS = Object.fromEntries(
 
 
 const MARKUP_DIR = fileURLToPath(new URL('../../design/markup/', import.meta.url));
+const MEDIA_MODULE = fileURLToPath(new URL('../../src/lib/media.ts', import.meta.url));
+
+/* A CONTENT ROOT WITH ONE FILE IN IT, because PostBody now resolves media and resolution is
+ * allowed to fail: `![alt](media/hero-a1b2c3.jpg)` in the fixture below is a reference that must
+ * name a committed original, and src/lib/media.ts throws when it does not. Zero bytes is enough —
+ * resolution reads the directory LISTING, never the file — so this needs no binary fixture in a
+ * repository that holds no content.
+ *
+ * Set for the whole file rather than around one test: nothing else here reads a content root, and
+ * an env var restored in a `finally` is a thing to get wrong for no benefit. */
+const MEDIA_FIXTURE_DIR = mkdtempSync(join(tmpdir(), 'jamground-media-'));
+mkdirSync(join(MEDIA_FIXTURE_DIR, 'content', 'media'), { recursive: true });
+writeFileSync(join(MEDIA_FIXTURE_DIR, 'content', 'media', 'hero-a1b2c3.jpg'), '');
+process.env.JAMGROUND_CONTENT_DIR = MEDIA_FIXTURE_DIR;
 
 function compile(relPath) {
   const sourcePath = fileURLToPath(new URL(relPath, COMPONENTS_DIR));
@@ -66,6 +80,11 @@ function compile(relPath) {
   let code = result.code.replace(/from "(\.\/[^"]+)\.astro"/g, 'from "$1.ts"');
   /* mdast-to-blocks.ts is rewritten to .js since we'll write it as JavaScript to the temp dir. */
   code = code.replace(/from "(\.\.\/lib\/mdast-to-blocks)\.ts"/g, 'from "$1.js"');
+  /* media.ts goes the OTHER way — pointed at the real file rather than copied into the temp
+   * tree. It reads `content/media/` through resolveContentRoot(), so a stripped copy would not be
+   * the module under test; and pointing at the real path means its own imports resolve from
+   * where it actually lives, exactly as the design/markup rule below relies on. */
+  code = code.replace(/from "\.\.\/lib\/media\.ts"/g, `from "${MEDIA_MODULE}"`);
   /* If this is PostBody (which will be placed in components/), adjust BlockList import */
   if (relPath === 'PostBody.astro') {
     code = code.replace(/from "\.\/BlockList\.ts"/g, 'from "../BlockList.ts"');
@@ -144,7 +163,7 @@ test('BlockList — dispatches every one of the eleven block types, in order', a
     { type: 'paragraph', text: 'Para text' },
     { type: 'heading', level: 2, text: 'Heading text' },
     { type: 'list', ordered: false, items: [{ text: 'One' }] },
-    { type: 'image', media: { ref: 'media/a.jpg', alt: 'Alt' } },
+    { type: 'image', media: { src: 'media/a.jpg', alt: 'Alt' } },
     { type: 'quote', text: 'Quoted.' },
     { type: 'code', text: 'const x = 1;' },
     { type: 'table', head: ['A'], rows: [['1']] },
@@ -191,6 +210,29 @@ test('BlockList — a block whose link never went through resolveBlockLinks thro
       blocks: [{ type: 'cta', heading: 'Ready', link: { label: 'Go', ref: '01ARZ3NDEKTSV4RRFFQ69G5FAV' } }],
     }),
     /cta link reached the renderer unresolved/,
+  );
+});
+
+/* The same claim for media, and it has to be made twice because two components carry it: an
+ * image block IS its media, and a hero's is optional. Both are handed the contract's `ref` here,
+ * which is what a route that skipped resolveBlockMedia() would hand them. */
+test('BlockList — a block whose media never went through resolveBlockMedia throws', async () => {
+  await assert.rejects(
+    () => render(BlockList, { blocks: [{ type: 'image', media: { ref: 'media/a.jpg', alt: 'A' } }] }),
+    /image media reached the renderer unresolved/,
+  );
+  await assert.rejects(
+    () => render(BlockList, { blocks: [{ type: 'hero', heading: 'H', media: { ref: 'media/a.jpg', alt: 'A' } }] }),
+    /hero media reached the renderer unresolved/,
+  );
+});
+
+/* And a post body whose markdown names an original nobody committed fails the build rather than
+ * rendering an <img> at an address that answers 404. Same rule links are held to. */
+test('PostBody — a markdown image with no committed original fails the build', async () => {
+  await assert.rejects(
+    () => render(PostBody, { body: '![Alt](media/never-committed.jpg)\n' }),
+    /media not found: media\/never-committed\.jpg/,
   );
 });
 
@@ -242,10 +284,13 @@ test('PostBody — every mapped construct in one pass, through BlockList, not As
       '<thead><tr><th>A</th><th>B</th></tr></thead>' +
       '<tbody><tr><td>1</td><td>2</td></tr></tbody>' +
       '</table></figure>' +
-      // The path is exactly as written in the markdown — never resolved against the
-      // entry file's own directory, which is the mistake this component exists
-      // to avoid by never calling into Astro's markdown pipeline at all.
-      '<figure class="wp-block-image"><img src="media/hero-a1b2c3.jpg" alt="A team at work"></figure>' +
+      // ROOTED AT THE SITE, and this line is the one that changed. The markdown says
+      // `media/hero-a1b2c3.jpg`, which is a path into the CONTENT repository — never resolved
+      // against the entry file's own directory, which is the mistake this component exists to
+      // avoid by never calling into Astro's markdown pipeline at all. It was emitted verbatim
+      // into `src` until resolveBlockMedia() ran here, which made it relative to whatever post
+      // was rendering: a second wrong root, one layer below the one this component prevents.
+      '<figure class="wp-block-image"><img src="/media/hero-a1b2c3.jpg" alt="A team at work"></figure>' +
       '<hr class="wp-block-separator has-alpha-channel-opacity">',
   );
 });

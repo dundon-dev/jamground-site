@@ -36,7 +36,12 @@ const MARKUP = {
   hero: (a) => hero({
     heading: a.heading ?? '',
     body: a.body,
-    media: a.media,
+    // `src` is the RAW reference here. Astro hands the module a URL resolved against
+    // content/media/; there is no such directory inside Playground and no resolver to consult,
+    // so what the canvas shows is the contract's own path — which is what it showed before the
+    // module drew the distinction. Same shape as `cta` one line down, where the label travels
+    // and the href does not (09 §7).
+    media: a.media ? { src: a.media.ref, alt: a.media.alt, decorative: a.media.decorative } : undefined,
     cta: a.cta ? { label: a.cta.label ?? '' } : undefined,
   }),
   featureGrid: (a) => featureGrid({

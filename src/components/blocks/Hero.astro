@@ -20,15 +20,23 @@
  * UPSTREAM, in the route's getStaticPaths, via resolveBlockLinks() (../../lib/links.ts) — so what
  * arrives here is a ResolvedLink carrying `href`. The markup module's `href` is optional because
  * the EDITOR has no resolver and renders the label without a target (09 §7); on the site an
- * unresolved cta is a build failure, which is what the guard below is for. */
+ * unresolved cta is a build failure, which is what the guard below is for.
+ *
+ * MediaRef.ref is the same shape of problem and takes the same shape of answer. It is a path
+ * rooted at the CONTENT repository, not a URL, and rendering it straight into `src` made it
+ * relative to whatever page was rendering — so resolveBlockMedia() (../../lib/media.ts) runs
+ * upstream too and what arrives here carries `src`. Resolved upstream rather than here for the
+ * reason the harness comment above gives: media.ts reads the filesystem, and an import of it
+ * would put a content root behind every block-markup test. */
 import type { z } from 'zod';
 import type { Block } from '../../contract/blocks.ts';
 import type { ResolvedLink } from '../../lib/links.ts';
 import { toHtml } from '../../../design/markup/node.ts';
-import { hero } from '../../../design/markup/hero.ts';
+import { hero, type MarkupMedia } from '../../../design/markup/hero.ts';
 
-type Props = Omit<Extract<z.infer<typeof Block>, { type: 'hero' }>, 'type' | 'cta'> & {
+type Props = Omit<Extract<z.infer<typeof Block>, { type: 'hero' }>, 'type' | 'cta' | 'media'> & {
   cta?: ResolvedLink;
+  media?: MarkupMedia;
 };
 
 const { heading, body, media, cta } = Astro.props as Props;
@@ -41,6 +49,11 @@ const { heading, body, media, cta } = Astro.props as Props;
 if (cta && typeof (cta as { href?: unknown }).href !== 'string') {
   throw new Error(
     'hero cta reached the renderer unresolved — blocks must go through resolveBlockLinks() (INV-11)',
+  );
+}
+if (media && typeof (media as { src?: unknown }).src !== 'string') {
+  throw new Error(
+    'hero media reached the renderer unresolved — blocks must go through resolveBlockMedia() (INV-4)',
   );
 }
 ---

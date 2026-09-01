@@ -111,6 +111,18 @@ guards in `src/components/blocks/Hero.astro` and `Cta.astro` — because
 `test/contract/links.test.mjs` asserts on that exact text. They are defined here because nothing
 else in this repository defines them any more.
 
+**INV-4 — a media reference with no committed original is a build failure.** `MediaRef.ref` is a
+path rooted at the content repository, not a URL. `resolveBlockMedia()` in `src/lib/media.ts`
+turns it into one — `/media/<file>` — and throws when the original is not in `content/media/`,
+naming the directory it searched. Held to the same standard as a link and for the same reason: the
+alternative is an `<img>` at an address that answers 404, discovered by a reader rather than by
+the build. It runs where link resolution runs — in the route's `getStaticPaths`, and in
+`PostBody.astro` for a markdown body, which is the only other place a reference enters a renderer.
+`Hero.astro` and `Image.astro` throw if handed an unresolved one, which is what makes the pass
+mandatory rather than conventional. The bytes are put where the URL points by the
+`jamground:media` integration in `astro.config.mjs`; `test/conformance/media-reaches-the-build.test.mjs`
+is the only test that can see both halves at once.
+
 **INV-11 — an unresolvable target is a build failure, never a fallback href.** Every path through
 `hrefFor()` in `src/lib/links.ts` that cannot produce a real href throws a `LinkResolutionError`
 tagged `INV-11` instead of returning one: a `ref:` naming a translation group no entity declares,

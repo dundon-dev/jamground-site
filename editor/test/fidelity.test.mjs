@@ -49,16 +49,16 @@ const HOSTILE = ['a', '&', 'b', '<', 'c', '>', 'd', '"', 'e', String.fromCharCod
 const FIXTURES = [
   ['hero — every optional present', () => hero({
     heading: 'Pricing & plans', body: 'No setup fees.',
-    media: { ref: 'media/hero-a1b2c3.jpg', alt: 'A team at work' },
+    media: { src: 'media/hero-a1b2c3.jpg', alt: 'A team at work' },
     cta: { label: 'Get started', href: '/en-us/pricing/' },
   })],
   ['hero — heading only', () => hero({ heading: 'Sales & Marketing' })],
   ['hero — decorative media, which renders an empty alt', () => hero({
-    heading: 'H', media: { ref: 'media/x.jpg', decorative: true },
+    heading: 'H', media: { src: 'media/x.jpg', decorative: true },
   })],
   ['hero — hostile characters in every text position', () => hero({
     heading: HOSTILE, body: HOSTILE,
-    media: { ref: 'media/x.jpg', alt: HOSTILE },
+    media: { src: 'media/x.jpg', alt: HOSTILE },
     cta: { label: HOSTILE, href: '/p/?a=1&b=2' },
   })],
   ['featureGrid — two columns', () => featureGrid({

@@ -12,10 +12,24 @@ export interface MarkupLink {
   href?: string;
 }
 
+/** An image that has been resolved. `MediaRef.ref` is a path rooted at the CONTENT repository —
+ *  `media/hero-a1b2c3.jpg` — which is not a URL, and rendering it straight into `src` made it one
+ *  relative to whatever page was rendering. So `src` arrives already resolved, exactly as `href`
+ *  does above and for the same reason: Astro resolves it against `content/media/` and fails the
+ *  build if the original is not committed (src/lib/media.ts); the editor has no such directory to
+ *  look in and passes the raw reference, which is what it displayed before this distinction
+ *  existed. One field, supplied by each renderer, rather than a rule inside this module about
+ *  which of them is asking. */
+export interface MarkupMedia {
+  src: string;
+  alt?: string;
+  decorative?: boolean;
+}
+
 export interface HeroProps {
   heading: string;
   body?: string;
-  media?: { ref: string; alt?: string; decorative?: boolean };
+  media?: MarkupMedia;
   cta?: MarkupLink;
 }
 
@@ -27,7 +41,7 @@ export function hero(props: HeroProps): Node {
     media
       ? el('img', {
           class: 'jp-hero__media',
-          src: media.ref,
+          src: media.src,
           // Decorative is DECLARED, never signalled by an empty string (OD-22) — but an empty
           // `alt` is what a decorative image must render, and Astro emits that as a bare `alt`.
           alt: media.decorative ? '' : media.alt,

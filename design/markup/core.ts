@@ -41,8 +41,15 @@ export interface CoreCase {
   name: string;
   /** The Astro component that renders this contract type. */
   component: string;
-  /** The contract block. Minus `type`, these are the component's props. */
+  /** The contract block. Drives the editor half through the real mapper, and is what the
+   *  coverage assertions count types from. */
   block: { type: string; [field: string]: unknown };
+  /** What the Astro component takes, where that is no longer the contract block minus `type`.
+   *  Present on the `image` rows and nowhere else: `MediaRef.ref` is a path rooted at the content
+   *  repository and a component is handed the RESOLVED `src` instead (src/lib/media.ts), so the
+   *  contract shape and the prop shape have come apart for exactly the field that resolves.
+   *  Absent means the two are still the same thing. */
+  props?: Record<string, unknown>;
   /** Only where blocks-to-wp.mjs has no arm for the type. See the header. */
   wp?: { name: string; attributes: Record<string, unknown> };
   /** Astro's exact bytes, with whitespace between tags collapsed — that whitespace is Astro's
@@ -102,10 +109,17 @@ export const CORE_CASES: readonly CoreCase[] = [
   // a literal empty `alt` for the decorative case, because those are WordPress's attribute names
   // and WordPress's way of saying it — the contract's `MediaRef` declares `decorative: true`
   // instead, and OD-22 is emphatic that the two are not the same statement.
+  //
+  // They carry `props` for a different reason: Image.astro takes a resolved `src`, not a `ref`.
+  // The value below is left UNRESOLVED on purpose — this record is about markup SHAPE, and an
+  // `src` is a string to it. Whether `media/a.jpg` becomes `/media/a.jpg`, and whether it fails
+  // the build when the original is not committed, is test/media.test.mjs's question; asserting it
+  // here as well would tie the frozen markup to a content root it has no business knowing about.
   {
     name: 'image — figure/img pair and a captioned figcaption',
     component: 'Image.astro',
     block: { type: 'image', media: { ref: 'media/a.jpg', alt: 'Alt text' }, caption: 'A caption' },
+    props: { media: { src: 'media/a.jpg', alt: 'Alt text' }, caption: 'A caption' },
     wp: { name: 'core/image', attributes: { url: 'media/a.jpg', alt: 'Alt text', caption: 'A caption' } },
     markup: '<figure class="wp-block-image">'
       + '<img src="media/a.jpg" alt="Alt text">'
@@ -116,6 +130,7 @@ export const CORE_CASES: readonly CoreCase[] = [
     name: 'image — decorative media gets an empty alt and no caption element',
     component: 'Image.astro',
     block: { type: 'image', media: { ref: 'media/b.jpg', decorative: true } },
+    props: { media: { src: 'media/b.jpg', decorative: true } },
     wp: { name: 'core/image', attributes: { url: 'media/b.jpg', alt: '' } },
     markup: '<figure class="wp-block-image"><img src="media/b.jpg" alt></figure>',
   },
