@@ -21,7 +21,7 @@
 // 3. IT IS BUILT FROM THE SAVED STATE, ON PURPOSE. Every path uses each row's TOP-LEVEL
 //    `slug` — read-posts.mjs's "the slug the file on disk currently has" — never
 //    `frontmatter.slug`, which is whatever WordPress currently holds and may be an unsaved
-//    edit. The staging site serves what the last save wrote, so a map built from the unsaved
+//    edit. The preview serves what the last save wrote, so a map built from the unsaved
 //    value would link to an address that does not answer. Being one save behind is not a
 //    limitation here; it is agreement with the site being linked to.
 import { KINDS } from './kinds.mjs';
@@ -34,7 +34,7 @@ export const SITE_LINKS_FILE = 'jp-site-links.json';
 /**
  * WHICH ENTITIES GET AN ADDRESS, AND WHY IT DEPENDS ON THE ORIGIN.
  *
- * A staging site is built with `JAMGROUND_INCLUDE_DRAFTS=1` and renders drafts; the production
+ * A preview is built with `JAMGROUND_INCLUDE_DRAFTS=1` and renders drafts; the production
  * build excludes them. So while a change is open every entity has an address, and while none
  * is open a draft has one nowhere in the world. An entity with no address gets no entry, and
  * the mu-plugin removes the link rather than pointing it somewhere untrue.

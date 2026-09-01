@@ -225,6 +225,14 @@ function handleOAuthCallback() {
 // rather than by assigning innerHTML: the only thing that ever reaches this line is our own
 // vocabulary plus a URL derived from the fork's own configuration, and it should stay that way
 // by construction rather than by everyone remembering.
+/* The standing line, written once at module scope rather than on any event. It says which parts
+ * of this screen are the site and which are settled elsewhere (09 §7), and that is true before
+ * sign-in, during a change, and after publishing — so there is no state it should react to and no
+ * control to dismiss it. It lives in VOCAB rather than in index.html so the vocabulary gate scans
+ * it with the rest. */
+const standingNote = document.getElementById('jamground-standing-note');
+if (standingNote) standingNote.textContent = VOCAB.standingNote;
+
 function showStatus(message, link) {
   const el = document.getElementById('jamground-status');
   if (!el) return;
@@ -472,11 +480,11 @@ window.jamgroundShell = (() => {
         });
         change = { branch, baseBranch: BASE_BRANCH, prNumber: pr.number, prNodeId: pr.node_id };
         window.jamgroundLastAction = { type: 'startAChange', branch, prNumber: pr.number };
-        // The earliest moment the staging address is known. The site behind it does not exist
+        // The earliest moment the preview address is known. The site behind it does not exist
         // yet — the box builds it from the webhook this action just caused, which takes about a
         // minute — so the message says so rather than handing over a link that 404s and letting
         // the editor conclude the feature is broken.
-        showStatus(`${VOCAB.changeStarted} — ${VOCAB.stagingPreparing}`, PREVIEW_URL_FOR(pr.number));
+        showStatus(`${VOCAB.changeStarted} — ${VOCAB.previewPreparing}`, PREVIEW_URL_FOR(pr.number));
         setStartAChangeEnabled(false);
         // AFTER every visible state change, and that order is load-bearing. The controls are
         // wired fire-and-forget, so anything awaited here opens a window in which the status
@@ -485,7 +493,7 @@ window.jamgroundShell = (() => {
         // "disabled after a successful start" assertion caught it.
         //
         // wp-admin's own links now have somewhere true to go for every entity, drafts
-        // included: the staging build renders those, and the published site does not.
+        // included: the preview build renders those, and the published site does not.
         await refreshSiteLinks({
           client: window.jamgroundClient, origin: PREVIEW_URL_FOR(pr.number), includeDrafts: true,
         });
@@ -547,7 +555,7 @@ window.jamgroundShell = (() => {
         // ref update below is what GitHub reports as `synchronize`, and that is the delivery the
         // box turns into a preview — so the one moment an editor is most likely to go and look is
         // this one, and showStatus has just wiped the link the change opened with.
-        showStatus(VOCAB.savedStagingUpdating, PREVIEW_URL_FOR(change.prNumber));
+        showStatus(VOCAB.savedPreviewUpdating, PREVIEW_URL_FOR(change.prNumber));
         // A slug that just moved moved on disk too, so the addresses have to catch up. The
         // origin is unchanged; this is the map, not the host.
         await refreshSiteLinks({
@@ -584,10 +592,10 @@ window.jamgroundShell = (() => {
         } else {
           // Sending for review moves no content, so nothing rebuilds — the consumer ignores
           // `ready_for_review` deliberately. The address is repeated rather than the update
-          // promised again: the staging site is still showing the last save, and an editor who
+          // promised again: the preview is still showing the last save, and an editor who
           // has just been told "sent for review" with no address is the one who goes looking for
           // a rebuild that was never going to happen.
-          showStatus(VOCAB.sentForReviewStagingAt, PREVIEW_URL_FOR(change.prNumber));
+          showStatus(VOCAB.sentForReviewPreviewAt, PREVIEW_URL_FOR(change.prNumber));
         }
         return result || { success: true };
       } catch (error) {
@@ -621,7 +629,7 @@ window.jamgroundShell = (() => {
           showStatus(VOCAB.publishedLiveAt, SITE_URL);
           change = null;
           setStartAChangeEnabled(true);
-          // The staging host is torn down with the change that owned it, so the addresses go
+          // The preview host is torn down with the change that owned it, so the addresses go
           // back to the published site — and drafts, which it does not render, go back out.
           await refreshSiteLinks({
             client: window.jamgroundClient, origin: SITE_URL, includeDrafts: false,

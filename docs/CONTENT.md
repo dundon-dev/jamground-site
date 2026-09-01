@@ -76,9 +76,17 @@ a defect, not noise to ignore). Eight mirror a Gutenberg core block one for one 
 `heading` (levels 2–4), `list` (three explicit levels, each with its own `ordered`), `image`,
 `quote`, `code`, `table`, `separator` — and round-trip against that block's own markup. Three are
 custom `jamground/*` types with no core equivalent — `hero`, `featureGrid`, `cta` — and are
-"dynamic": they save no markup of their own in the editor, so the matching Astro component
-(`src/components/blocks/`) is their only renderer. `Page` is the one entity with a `blocks`
-field; every other kind's body, where it has one, is Markdown.
+"dynamic": they save no markup of their own, so the persisted form is a single self-closing
+delimiter carrying only attributes, and there is no HTML for block validation to reject. `Page` is
+the one entity with a `blocks` field; every other kind's body, where it has one, is Markdown.
+
+Their markup has **two** renderers, and neither is allowed to define it. The element structure and
+class names live once, in `design/markup/<block>.ts`, as an abstract node description;
+`src/components/blocks/` renders it to HTML for the site and the editor's `edit` component renders
+the same description through `createElement` for the canvas. That is what lets one stylesheet
+apply in both places (ADR-0013), and it is why a class renamed in a component is not expressible —
+there is no markup in a component to rename. `editor/test/fidelity.test.mjs` is the backstop
+against someone bypassing the module.
 
 ## The canonical byte form
 

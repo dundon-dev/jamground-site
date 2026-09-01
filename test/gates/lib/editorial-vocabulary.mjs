@@ -7,6 +7,23 @@ import { join } from 'path';
 const FORBIDDEN_WORDS = ['branch', 'commit', 'merge', 'rebase', 'pull request'];
 
 /**
+ * A SECOND RULE, AND IT IS NOT THE GIT ONE. The list above is mechanics an editor must never be
+ * shown (04 §Editorial-vocabulary's translation table). This one is about naming a thing that does
+ * not exist: the glossary says "there is deliberately no long-lived staging environment", and what
+ * a change actually gets is a **Preview** — ephemeral, at `pr-<number>.preview.<domain>`, torn
+ * down with the change that owned it.
+ *
+ * It is kept separate rather than appended to FORBIDDEN_WORDS because the two fail for different
+ * reasons and deserve different messages: "branch" leaks the mechanism, "staging site" names the
+ * wrong thing. Three strings in editor/lib/vocabulary.mjs said "your staging site" while the
+ * control beside them said "preview" and the function producing the address was PREVIEW_URL_FOR —
+ * two names for one thing, only one of them real, and nothing here noticed.
+ */
+const WRONG_PRODUCT_TERMS = [
+  { pattern: /\bstaging\b/gi, word: 'staging', instead: 'preview — the glossary is explicit that there is no staging environment (04 §Editorial-vocabulary)' },
+];
+
+/**
  * Extract string literals from JavaScript source code, excluding:
  * - Comments (// and block comments)
  * - Property names (key: value in objects)
@@ -104,6 +121,21 @@ export function checkForViolations(text) {
     while ((match = regex.exec(lowerText)) !== null) {
       violations.push({
         word: word,
+        foundText: text.substring(
+          Math.max(0, match.index - 20),
+          Math.min(text.length, match.index + word.length + 20)
+        ),
+      });
+    }
+  }
+
+  for (const { pattern, word, instead } of WRONG_PRODUCT_TERMS) {
+    const regex = new RegExp(pattern.source, pattern.flags);
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      violations.push({
+        word,
+        instead,
         foundText: text.substring(
           Math.max(0, match.index - 20),
           Math.min(text.length, match.index + word.length + 20)

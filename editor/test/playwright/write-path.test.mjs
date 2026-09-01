@@ -380,12 +380,12 @@ test('the write path: start a change, save, send for review, publish — through
     await page.click('#jamground-control-startAChange');
     status = await waitForStatusChange(page, beforeStart);
     // The status line no longer says only `changeStarted`: opening a change also hands over the
-    // staging address, so this reads `<changeStarted> — <stagingPreparing>` with the URL appended
+    // preview address, so this reads `<changeStarted> — <previewPreparing>` with the URL appended
     // as a link, and textContent concatenates the link's text. Asserting the prefix plus the
     // address is stronger than the old equality — it checks the address is actually offered.
     assert.ok(status.startsWith(VOCAB.changeStarted), `status should open with the change-started wording, got: ${status}`);
-    assert.ok(status.includes(VOCAB.stagingPreparing), 'the staging site should be offered when the change opens');
-    assert.match(status, /https:\/\/pr-\d+\.preview\./, 'the staging address itself must be on screen, not merely promised');
+    assert.ok(status.includes(VOCAB.previewPreparing), 'the preview should be offered when the change opens');
+    assert.match(status, /https:\/\/pr-\d+\.preview\./, 'the preview address itself must be on screen, not merely promised');
 
     // After starting a change, the startAChange control should be disabled: a change is
     // open and the control must track token && !change.
@@ -498,15 +498,15 @@ test('the write path: start a change, save, send for review, publish — through
     await page.click('#jamground-control-save');
     status = await waitForStatusChange(page, beforeSave);
     // Not equality any more, and the difference is the regression this asserts against. The
-    // status line replaces its whole contents on every call, so the staging address offered when
+    // status line replaces its whole contents on every call, so the preview address offered when
     // the change opened is gone the moment anything else is said — and saving is exactly when an
     // editor goes looking for it, because saving is what causes the rebuild. A `save` that says
     // only "saved" is how the preview feature came to read as broken while every preview behind
     // it was building correctly.
-    assert.ok(status.startsWith(VOCAB.savedStagingUpdating),
+    assert.ok(status.startsWith(VOCAB.savedPreviewUpdating),
       `save should report the saved-and-updating wording, got: ${status}`);
     assert.match(status, /https:\/\/pr-\d+\.preview\./,
-      'the staging address must still be on screen after a save, not only when the change opened');
+      'the preview address must still be on screen after a save, not only when the change opened');
 
     const lastAction = await page.evaluate(() => window.jamgroundLastAction);
     assert.equal(lastAction.type, 'save');
@@ -557,7 +557,7 @@ test('the write path: start a change, save, send for review, publish — through
     }
     assert.ok(createdCommits.length > secondSaveCreatedCommitsStart, 'second save should create a commit within timeout');
     status = await page.evaluate(() => document.getElementById('jamground-status').textContent);
-    assert.ok(status.startsWith(VOCAB.savedStagingUpdating),
+    assert.ok(status.startsWith(VOCAB.savedPreviewUpdating),
       `the second save should report the same wording, got: ${status}`);
     assert.match(status, /https:\/\/pr-\d+\.preview\./,
       'and must still carry the address — a second save is where a one-shot link would be lost');
@@ -581,13 +581,13 @@ test('the write path: start a change, save, send for review, publish — through
     status = await waitForStatusChange(page, beforeReview);
     // Sending for review moves no content and triggers no rebuild — the queue consumer ignores
     // `ready_for_review` on purpose — so the wording must not promise an update. What it must
-    // still do is keep the address on screen: the staging site is showing the last save, and an
+    // still do is keep the address on screen: the preview is showing the last save, and an
     // editor told "sent for review" with no address is one who goes looking for a rebuild that
     // was never going to happen.
-    assert.ok(status.startsWith(VOCAB.sentForReviewStagingAt),
+    assert.ok(status.startsWith(VOCAB.sentForReviewPreviewAt),
       `send-for-review should report the still-showing wording, got: ${status}`);
     assert.match(status, /https:\/\/pr-\d+\.preview\./,
-      'the staging address must survive send-for-review too');
+      'the preview address must survive send-for-review too');
     assert.ok(!/updating/.test(status),
       'sending for review rebuilds nothing, so it must not promise an update');
 

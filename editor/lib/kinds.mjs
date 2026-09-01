@@ -134,7 +134,7 @@ export const KINDS = {
       // `slug === 'home'` and `[slug].astro` excludes that slug from the ordinary routes, so
       // renaming the home page in wp-admin does not move the homepage — it REMOVES it. The
       // build then fails, jamground-deploy never flips a failed build, and the live site keeps
-      // serving the previous release; the editor's only signal is a staging site that never
+      // serving the previous release; the editor's only signal is a preview that never
       // appears. Refusing here is where they can see it.
       if (previousSlug === HOME_SLUG && frontmatter.slug !== HOME_SLUG) {
         throw editorialError(VOCAB.homePageAddressFixed);

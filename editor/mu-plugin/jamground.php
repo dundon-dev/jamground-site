@@ -561,7 +561,7 @@ add_filter('post_type_link', function ($url, $post) {
 // Preview is the one link whose WORD this cannot honour, and it is worth being exact about
 // why. WordPress's Preview means "see your unsaved draft": the shell cannot know about unsaved
 // edits at all — it cannot reach Gutenberg's DOM across the Playground origin boundary — and
-// the staging site is rebuilt from the save, not from typing. So this address shows the last
+// the preview is rebuilt from the save, not from typing. So this address shows the last
 // SAVED state. It is pointed at the same real place as the permalink because that is the
 // closest true thing, and the shell's status line is where the caveat is said in words.
 // With nothing to show, it returns empty rather than a WASM address dressed up as the site.

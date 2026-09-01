@@ -23,12 +23,30 @@
       bottom: 20px;
       right: 20px;
       display: flex;
+      /* A column so the standing note sits above the buttons inside the same card. It was a row
+         of buttons; the note is part of the same object, not a second floating thing. */
+      flex-direction: column;
       gap: 10px;
       z-index: 10000;
       background: white;
       padding: 10px;
       border-radius: 8px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    #jamground-control-buttons {
+      display: flex;
+      gap: 10px;
+    }
+    /* PERMANENT, AND THERE IS NO CONTROL TO DISMISS IT. A notice an editor can close is a notice
+       most editors have closed, and the thing it says — which parts of this screen are the site
+       and which are settled elsewhere — does not stop being true after it is read once. */
+    #jamground-standing-note {
+      margin: 0;
+      max-width: 420px;
+      color: #4c5461;
+      font-size: 12px;
+      line-height: 1.45;
+      font-family: system-ui, -apple-system, sans-serif;
     }
     .jamground-control-button {
       padding: 8px 16px;
@@ -76,11 +94,18 @@
   <iframe id="wp"></iframe>
   <div id="jamground-status" role="status" aria-live="polite"></div>
   <div id="jamground-controls">
-    <button id="jamground-control-signIn" class="jamground-control-button">sign in</button>
-    <button id="jamground-control-startAChange" class="jamground-control-button" disabled>start a change</button>
-    <button id="jamground-control-save" class="jamground-control-button" disabled>save this change</button>
-    <button id="jamground-control-sendForReview" class="jamground-control-button" disabled>send for review</button>
-    <button id="jamground-control-publish" class="jamground-control-button" disabled>publish</button>
+    <!-- Filled from VOCAB.standingNote by entry.mjs rather than written here, so it is subject to
+         test/gates/editorial-vocabulary.test.mjs like every other editor-facing string. Empty in
+         the markup for the same reason the buttons are not: a second copy of the words is a second
+         thing to keep in step. -->
+    <p id="jamground-standing-note"></p>
+    <div id="jamground-control-buttons">
+      <button id="jamground-control-signIn" class="jamground-control-button">sign in</button>
+      <button id="jamground-control-startAChange" class="jamground-control-button" disabled>start a change</button>
+      <button id="jamground-control-save" class="jamground-control-button" disabled>save this change</button>
+      <button id="jamground-control-sendForReview" class="jamground-control-button" disabled>send for review</button>
+      <button id="jamground-control-publish" class="jamground-control-button" disabled>publish</button>
+    </div>
   </div>
   <script type="module" src="shell.js"></script>
 </body>

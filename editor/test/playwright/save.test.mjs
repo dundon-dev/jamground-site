@@ -227,6 +227,32 @@ test('shell: five controls, a closure-only token, and a no-op save', async () =>
       });
     });
 
+    // 1b. AND THE STANDING LINE, on screen before sign-in and with nothing to dismiss it. The gate
+    // asserts the words and the markup; this asserts an editor can actually read it — a note that
+    // is present, empty, or painted under the controls is present in the DOM either way.
+    const note = await page.evaluate(() => {
+      const el = document.getElementById('jamground-standing-note');
+      if (!el) return null;
+      const rect = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      return {
+        text: el.textContent.trim(),
+        visible: cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity) > 0,
+        onScreen: rect.width > 0 && rect.height > 0
+          && rect.top >= 0 && rect.left >= 0
+          && rect.bottom <= window.innerHeight && rect.right <= window.innerWidth,
+        // Anything clickable inside it would be a way to make it go away.
+        controls: el.querySelectorAll('button, a[role="button"], [aria-label*="dismiss" i], [aria-label*="close" i]').length,
+      };
+    });
+    assert(note, 'the shell should carry a standing line');
+    assert(note.text.length > 0, 'the standing line should not be empty — entry.mjs fills it from VOCAB');
+    assert(note.visible && note.onScreen, `the standing line should be legible on screen, got: ${JSON.stringify(note)}`);
+    assert.equal(note.controls, 0, 'the standing line must not be dismissible');
+    assert.match(note.text, /design system/i);
+    assert.match(note.text, /preview/i);
+    assert.equal(/staging/i.test(note.text), false, 'this product has no staging site to name');
+
     // 2. Sign in through the popup control — never `window.jamgroundShell.signIn()`.
     const [popup] = await Promise.all([
       context.waitForEvent('page'),

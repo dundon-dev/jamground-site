@@ -1,6 +1,15 @@
 // Editorial vocabulary: all editor-facing strings, no git mechanics.
 // Editors must never encounter the words branch, commit, merge, rebase, or pull request,
 // and must never be asked to resolve a conflict in git terms.
+//
+// AND NOTHING HERE MAY CALL A PREVIEW A "STAGING SITE". That is a second rule, and it is not the
+// git one: `04 §Editorial-vocabulary` fixes the editor-facing word for a change's own build as
+// **Preview**, and the glossary is explicit that "there is deliberately no long-lived staging
+// environment" — a preview is ephemeral, lives at `pr-<number>.preview.<domain>`, and is torn
+// down with the change that owned it. Three entries below said "your staging site" while the
+// control beside them said "preview" and the identifier producing the address said PREVIEW_URL_FOR,
+// so the product had two names for one thing and only one of them was real. Enforced by
+// test/gates/editorial-vocabulary.test.mjs alongside the git words.
 
 export const VOCAB = {
   // Sign-in: not a git term, so nothing here needs to be translated away from one —
@@ -13,6 +22,21 @@ export const VOCAB = {
   preview: 'preview',
   sendForReview: 'send for review',
   publish: 'publish',
+
+  // WHAT THIS EDITOR IS FOR, said permanently rather than as a notice that can be dismissed and
+  // then never seen again. It is the honest version of the claim, which is `09 §7`'s and not
+  // "WYSIWYG": what IS claimed is that a block does not look wrong — its colours, type, spacing
+  // and internal layout match the site, because both renderers emit the markup contract and both
+  // are sent the same stylesheet (ADR-0013). What is NOT claimed is the page around it —
+  // composition, chrome, responsive behaviour, and anything resolved at build such as a link to
+  // another entity, which has no href until the site is built.
+  //
+  // So it names where those ARE settled. `09 §7` puts it as "the branch preview remains the
+  // visual truth", and the editor-facing word for that is preview.
+  standingNote:
+    'blocks here use the site\'s own design system, so their colours, type and spacing are the '
+    + 'site\'s. the page around them — the header, the footer, and anything that depends on other '
+    + 'pages — is settled when you preview.',
 
   // Conflict resolution
   conflictMessage: 'someone else changed this — review the differences',
@@ -41,34 +65,34 @@ export const VOCAB = {
   // Said when the change opens, because that is the earliest moment the address is known — the
   // site itself takes about a minute to appear, and a link offered with no warning of that reads
   // as broken for the whole of its first minute.
-  stagingPreparing: 'your staging site is being prepared — it will be ready at this address in about a minute:',
+  previewPreparing: 'your preview is being prepared — it will be ready at this address in about a minute:',
   startAChangeFailed: 'starting a change did not complete — please try again',
   changeAlreadyOpen: 'a change is already open — finish it first',
   notInChange: 'start a change before doing this',
   noContentChange: 'make and save a change first',
   // `saved: 'saved'` used to be here, and `sentForReview` below it. Both were replaced rather than
   // joined: each said its word and nothing else, and showStatus replaces the status line outright,
-  // so each was a place the staging address was silently thrown away. Two entries saying the same
+  // so each was a place the preview address was silently thrown away. Two entries saying the same
   // thing, one with the address and one without, is an invitation to call the wrong one.
   //
-  // Said WITH the staging address attached, because the moment after a save is the moment an
+  // Said WITH the preview address attached, because the moment after a save is the moment an
   // editor most wants it and the moment it is least likely to still be on screen: showStatus
   // replaces the status line outright, so the address handed over when the change opened is gone
   // by now. Saving is also the action that actually causes the rebuild — GitHub sends
   // `synchronize` when the branch moves, and that is the delivery the box turns into a preview —
   // so promising an update here is a statement about what just happened, not a hope.
-  savedStagingUpdating: 'saved — your staging site is updating and will show this in about a minute at:',
+  savedPreviewUpdating: 'saved — your preview is updating and will show this in about a minute at:',
   nothingToSave: 'there is nothing new to save',
   saveFailed: 'save did not complete — please try again',
   // The same address again, and deliberately NOT a second promise of an update. Sending for
   // review moves no content, so nothing rebuilds — the box ignores that delivery on purpose. The
-  // staging site is still showing the last save, and saying so is what stops an editor waiting
+  // preview is still showing the last save, and saying so is what stops an editor waiting
   // for a change that is already there.
-  sentForReviewStagingAt: 'the change has been sent for review — it is still showing at:',
+  sentForReviewPreviewAt: 'the change has been sent for review — it is still showing at:',
   sendForReviewFailed: 'sending for review did not complete — please try again',
   published: 'published',
   // Said with the live site's address attached. Publishing closes the change, and a closed change
-  // has no staging site — the link offered when it opened is torn down within the minute. Ending
+  // has no preview — the link offered when it opened is torn down within the minute. Ending
   // on the address that IS now correct closes the loop; leaving the old one on screen would hand
   // the editor a link that worked a moment ago and does not now, which reads as a fault.
   //

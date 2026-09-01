@@ -349,7 +349,7 @@ test('exportEntity writes a page as a whole YAML document, with blocks last and 
 // `slug === 'home'` and `[slug].astro` excludes that slug from the ordinary routes, so renaming
 // the home page in wp-admin does not move the homepage — it REMOVES it. read-posts.mjs takes
 // the slug straight from `post_name`, so the rename reaches export intact; the build then
-// fails, jamground-deploy never flips a failed build, and the editor's only signal is a staging
+// fails, jamground-deploy never flips a failed build, and the editor's only signal is a preview
 // site that never appears. Refusing here is where they can see it.
 test('exportEntity refuses to rename the home page, in editorial language', () => {
   const markup = serialize([createBlock('core/paragraph', { content: 'Hello.' })]);
