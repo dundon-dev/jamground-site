@@ -75,10 +75,19 @@ section 3 therefore also drops the theme's `styles` through `wp_theme_json_data_
 `settings` and pointing the canvas's content width at `var(--jp-container)` — the site's own token,
 not a copy of its value.
 
-Two gates hold this in place, and they catch different things. `editor/test/fidelity.test.mjs`
+Three gates hold this in place, and they catch different things. `editor/test/fidelity.test.mjs`
 compares the Astro HTML with the editor's DOM and catches a block that looks wrong in the canvas;
 `editor/test/playwright/markup-parity.test.mjs` compares what the two block registries serialise
-and catches a save that cannot round-trip. Neither subsumes the other.
+and catches a save that cannot round-trip. No two of them subsume each other.
+
+The third belongs to the eight **core** blocks, whose markup is nobody's to author — it is
+WordPress's own `save()` output, reproduced by hand in `src/components/blocks/`. There is no shared
+function that could make those agree by construction, so the contract for them is a record:
+`design/markup/core.ts`. `test/blocks/core.test.mjs` holds Astro to it byte for byte and
+`editor/test/core-markup.test.mjs` holds WordPress's own `serialize()` to it once parsed, so Astro
+and WordPress agree transitively. The second of those is what notices a WordPress upgrade changing
+a core block's markup — before it existed, such an upgrade passed every gate here and split the
+site from the editor in silence.
 
 ### wp-admin's own links name the site, not the WASM instance
 

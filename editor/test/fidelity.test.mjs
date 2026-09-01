@@ -28,59 +28,17 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 require('./domshim.cjs'); // must run before @wordpress packages touch `window` at module scope
 
-const { JSDOM } = require('jsdom');
 const { createElement, renderToString } = require('@wordpress/element');
+
+/* The comparison itself lives in ./normalise.mjs, because editor/test/core-markup.test.mjs holds
+ * WordPress's own save() output to the same standard. See that file's header. */
+const { normalise } = await import('./normalise.mjs');
 
 const { toHtml } = await import('../../design/markup/node.ts');
 const { toElement } = await import('../../design/markup/to-element.ts');
 const { hero } = await import('../../design/markup/hero.ts');
 const { featureGrid } = await import('../../design/markup/feature-grid.ts');
 const { cta } = await import('../../design/markup/cta.ts');
-
-/* Editor-only, and narrowly. Everything not named here — element names, nesting, our own `jp-*`
- * classes, `href`, `src`, `alt`, `data-columns` — is compared exactly. A wider list is how this
- * gate would stop being one. */
-const EDITOR_ONLY_ATTRS = new Set([
-  'data-block', 'data-type', 'data-title', 'contenteditable', 'role', 'tabindex',
-  'aria-multiline', 'aria-label', 'spellcheck', 'style',
-]);
-const EDITOR_ONLY_CLASS = /^(block-editor-|components-|is-selected$|is-hovered$|wp-block$)/;
-
-/** One element as `tag|attr=value,…|` plus its children, with editor chrome removed. Comment
- *  nodes are skipped — block delimiters are comments and appear inside save output (PoC-2b found
- *  this crashing the comparison). Whitespace-only text between elements is dropped; text that
- *  carries content is compared. */
-function normaliseNode(node, out) {
-  if (node.nodeType === 8) return;                       // comment
-  if (node.nodeType === 3) {
-    const text = node.nodeValue.replace(/\s+/g, ' ').trim();
-    if (text) out.push(`#text:${text}`);
-    return;
-  }
-  if (node.nodeType !== 1) return;
-
-  const attrs = [];
-  for (const attr of [...node.attributes].sort((a, b) => a.name.localeCompare(b.name))) {
-    if (EDITOR_ONLY_ATTRS.has(attr.name)) continue;
-    if (attr.name === 'class') {
-      const kept = attr.value.split(/\s+/).filter((c) => c && !EDITOR_ONLY_CLASS.test(c));
-      if (kept.length) attrs.push(`class=${kept.sort().join(' ')}`);
-      continue;
-    }
-    attrs.push(`${attr.name}=${attr.value}`);
-  }
-
-  out.push(`<${node.nodeName.toLowerCase()}|${attrs.join(',')}>`);
-  for (const child of node.childNodes) normaliseNode(child, out);
-  out.push(`</${node.nodeName.toLowerCase()}>`);
-}
-
-export function normalise(html) {
-  const body = new JSDOM(`<!doctype html><body>${html}</body>`).window.document.body;
-  const out = [];
-  for (const child of body.childNodes) normaliseNode(child, out);
-  return out.join('');
-}
 
 const HOSTILE = ['a', '&', 'b', '<', 'c', '>', 'd', '"', 'e', String.fromCharCode(39), 'f'].join(' ');
 
