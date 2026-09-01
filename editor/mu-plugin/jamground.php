@@ -183,16 +183,57 @@ add_filter('register_block_type_args', function ($args) {
     return $args;
 }, 10, 1);
 
-// 3. The shared block stylesheet. Registered
-// with a false source and enqueued on enqueue_block_assets so it loads inside the editor
-// canvas as well as the front end preview; a custom property is set so a test can observe
-// that this hook actually ran.
+// 3. The design system, in the canvas — the other half of ADR-0013. The markup contract makes
+// both renderers emit the same elements and classes; this is what makes one stylesheet reach
+// both, so a block in wp-admin is coloured, set and spaced the way the site will render it.
+//
+// TWO MECHANISMS, AND THEY ARE NOT INTERCHANGEABLE. The difference is which document each
+// reaches, and getting it wrong restyles wp-admin itself.
+//
+//   enqueue_block_assets      the canvas AND the admin page around it, and the front end
+//   block_editor_settings_all the canvas only, scoped by WordPress to .editor-styles-wrapper
+//
+// The marker goes through the first because that is what it has always done and what
+// mu-plugin.test.mjs observes on the canvas `body`; it is one custom property and it damages
+// nothing. The design system goes through the second, because it is not scoped and cannot be:
+// `body { font-family }`, `h1`–`h4`, `p`, `a` and `:focus-visible` are element defaults, so sent
+// through enqueue_block_assets they would restyle every heading, paragraph and link in wp-admin.
+// Editor styles are WordPress's own answer to exactly this, and the scoping is theirs rather than
+// ours to maintain.
+//
+// design/site.css IS DELIBERATELY NOT HERE. It holds the page: `.site-header`, `.site-footer`,
+// `.site-container`, and a `body` that is `min-height: 100vh; display: flex` — a layout assuming
+// header/main/footer children, which the canvas does not have and wp-admin's own body would be
+// laid out by. The split between the two files is what makes that structural instead of a rule
+// somebody has to remember. See either file's header.
+//
+// THE CSS IS SUBSTITUTED AT BUILD TIME by editor/build.mjs, which reads design/tokens.css,
+// design/base.css and the three design/blocks/*.css and escapes the result for the PHP
+// single-quoted literal below — two characters, backslash and apostrophe, and no others. A
+// heredoc was the alternative and is worse: a nowdoc terminator appearing in the CSS would end
+// the string silently, and CSS is a file other people edit.
 add_action('init', function () {
     wp_register_style('jamground-blocks', false);
     wp_add_inline_style('jamground-blocks', 'body{--jp-mu-plugin:present;}');
 });
 add_action('enqueue_block_assets', function () {
     wp_enqueue_style('jamground-blocks');
+});
+
+add_filter('block_editor_settings_all', function ($settings) {
+    $css = '__JAMGROUND_CANVAS_CSS__';
+
+    // The unsubstituted placeholder means the shell shipped a mu-plugin the build never
+    // processed. Said out loud, because the symptom otherwise is a canvas that looks like
+    // unstyled wp-admin — which reads as "the design system does not work" rather than as
+    // "the design system never arrived".
+    if ($css === '__JAMGROUND' . '_CANVAS_CSS__' || $css === '') {
+        $settings['styles'][] = ['css' => 'body::before{content:"jamground: canvas CSS was never substituted by editor/build.mjs";display:block;background:#fee;color:#900;padding:8px;font:12px monospace;}'];
+        return $settings;
+    }
+
+    $settings['styles'][] = ['css' => $css];
+    return $settings;
 });
 
 // 4. Suppress the welcome guide. An editor whose familiarity is the product should not

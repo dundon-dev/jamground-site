@@ -1,24 +1,29 @@
-/* Reset, element defaults, layout primitives, page chrome, and the eight core wp-block-*
- * selectors. Reads the semantic colour tokens only — never a ramp step (see tokens.css).
+/* Reset, element defaults, and the eight core wp-block-* selectors — everything that is true
+ * of a block wherever it is rendered.
  *
- * Two placements are deliberate. The custom jamground/* blocks each get their own file under
- * blocks/, but the wp-block-* rules live here instead: that markup is WordPress core's own
- * OBSERVED save() output, not ours to author, so it sits with the element defaults rather
- * than as a block sheet of its own. Page chrome lives here for the same reason: it is
- * site-only, not a block, so it has no block sheet to live in either. */
+ * THIS FILE GOES TO THE EDITOR CANVAS AND site.css DOES NOT, which is the whole reason the two
+ * are separate files. The mu-plugin's section 3 sends tokens.css, this, and the three block
+ * sheets into wp-admin, so that a block in the canvas is coloured, set and spaced the way the
+ * site will render it (ADR-0013). What must NOT go is anything that assumes a PAGE: chrome
+ * selectors describe a header and footer the canvas does not have, and the layout primitives
+ * describe a document the canvas is not. `enqueue_block_assets` reaches wp-admin's own <body>
+ * as well as the canvas's, so a page-layout rule here would be laid over the whole admin.
+ *
+ * The rule for deciding, when something new is added: does it describe an ELEMENT or a BLOCK,
+ * or does it describe the PAGE those sit on? The first two belong here; the third belongs in
+ * site.css. `body`'s own declarations are split on exactly that line — its colour, family and
+ * measure are inherited by everything and are here; its `min-height: 100vh` and flex column
+ * are a page layout assuming header/main/footer children, and are there.
+ *
+ * Reads the semantic colour tokens only — never a ramp step (see tokens.css).
+ *
+ * The wp-block-* rules live here rather than in a block sheet of their own because that markup
+ * is WordPress core's own OBSERVED save() output, not ours to author, so it sits with the
+ * element defaults. */
 
 /* --- 1. Reset and element defaults ------------------------------------------------ */
 *, *::before, *::after { box-sizing: border-box; }
 body, h1, h2, h3, h4, p, figure, blockquote, ul, ol, dl, dd { margin: 0; }
-/* Named, not `ul[class]`. The [class] idiom is (0,1,1) — higher than any single class — so
- * it silently beat both `.wp-block-list`'s markers and `.site-container`'s gutter padding on
- * the post list, and each looked like a different bug. Listing the lists this stylesheet
- * actually owns keeps the reset at (0,1,0) and out of everything else's way. */
-.site-nav__list,
-.site-nav__sublist,
-.site-tag-list,
-.site-post-list,
-.site-footer__social { list-style: none; padding: 0; }
 img { max-width: 100%; height: auto; display: block; }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -29,9 +34,6 @@ body {
   font-family: var(--jp-font-sans);
   font-size: var(--jp-text-base);
   line-height: var(--jp-leading-normal);
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
 }
 
 h1, h2, h3, h4 {
@@ -66,183 +68,6 @@ a:hover { color: var(--jp-color-link-hover); }
     transition-duration: 0.01ms !important;
   }
 }
-
-/* --- 2. Layout primitives --------------------------------------------------------- */
-.site-container {
-  width: 100%;
-  max-width: var(--jp-container);
-  margin-inline: auto;
-  padding-inline: var(--jp-gutter);
-}
-
-.site-main { flex: 1 0 auto; padding-block: var(--jp-space-7); }
-
-.site-skip { position: absolute; left: -9999px; }
-.site-skip:focus {
-  left: var(--jp-space-4);
-  top: var(--jp-space-4);
-  z-index: 10;
-  background: var(--jp-color-surface);
-  padding: var(--jp-space-3) var(--jp-space-4);
-  border-radius: var(--jp-radius-md);
-  box-shadow: var(--jp-shadow-md);
-}
-
-/* A readable measure and a vertical rhythm applied to CHILDREN, so block markup needs no
- * wrapper of its own — block markup is frozen, so this rule may only style what already
- * exists, never add an element to hang a style on. .site-blocks is .site-prose plus the
- * three custom blocks going full-bleed. */
-:is(.site-prose, .site-blocks) > * {
-  max-width: var(--jp-measure);
-  margin-inline: auto;
-}
-:is(.site-prose, .site-blocks) > * + * { margin-block-start: var(--jp-space-5); }
-:is(.site-prose, .site-blocks) > :is(h2, h3, h4) { margin-block-start: var(--jp-space-7); }
-
-/* The container width, NOT `none`: each custom block already centres itself at
- * --jp-container, and releasing them entirely made the cta's rounded panel run wider than
- * the header above it. They opt out of the prose measure, not out of the page. */
-.site-blocks > :is(.jp-hero, .jp-cta, .jp-feature-grid) { max-width: var(--jp-container); }
-/* No margin between them: every custom block carries its own generous block padding, and
- * adding a margin on top of that stacked two gaps into one void. */
-.site-blocks > * + :is(.jp-hero, .jp-cta, .jp-feature-grid) { margin-block-start: 0; }
-.site-blocks > :first-child { margin-block-start: 0; }
-
-/* --- 3. Page chrome --------------------------------------------------------------- */
-/* Tinted, not white. The chrome and the page were the same surface, so the header read as
- * nothing at all — the single cheapest change that stops the site looking like an unstyled
- * document. bg-subtle, so it stays a token decision rather than a colour written here. */
-.site-header {
-  border-block-end: 1px solid var(--jp-color-border);
-  background: var(--jp-color-bg-subtle);
-}
-.site-header__inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--jp-space-5);
-  min-height: 4rem;
-  flex-wrap: wrap;
-}
-/* The one place the accent belongs in the chrome. Every other chrome colour stays neutral on
- * purpose: an accent used everywhere stops being an accent. */
-.site-brand {
-  font-weight: var(--jp-weight-bold);
-  font-size: var(--jp-text-lg);
-  color: var(--jp-color-link);
-  text-decoration: none;
-  letter-spacing: var(--jp-tracking-tight);
-}
-
-.site-nav__list { display: flex; gap: var(--jp-space-5); align-items: center; flex-wrap: wrap; }
-.site-nav__item { position: relative; }
-.site-nav__link,
-.site-nav__label {
-  color: var(--jp-color-text-muted);
-  font-size: var(--jp-text-sm);
-  font-weight: var(--jp-weight-medium);
-  text-decoration: none;
-}
-.site-nav__link:hover { color: var(--jp-color-text); }
-/* Styled off the attribute, not a class: the accessible signal and the visual one cannot
- * then drift apart. */
-/* The current page, in the accent — colour carrying meaning rather than decoration. */
-.site-nav__link[aria-current="page"] { color: var(--jp-color-link); }
-
-.site-nav__sublist { display: flex; gap: var(--jp-space-4); padding-inline-start: var(--jp-space-4); }
-@media (min-width: 48rem) {
-  .site-nav__sublist {
-    position: absolute;
-    inset-inline-start: 0;
-    top: 100%;
-    display: none;
-    flex-direction: column;
-    min-width: 12rem;
-    padding: var(--jp-space-3);
-    background: var(--jp-color-surface);
-    border: 1px solid var(--jp-color-border);
-    border-radius: var(--jp-radius-md);
-    box-shadow: var(--jp-shadow-md);
-  }
-  .site-nav__item:hover > .site-nav__sublist,
-  .site-nav__item:focus-within > .site-nav__sublist { display: flex; }
-}
-
-.site-footer {
-  border-block-start: 1px solid var(--jp-color-border);
-  background: var(--jp-color-bg-subtle);
-  padding-block: var(--jp-space-6);
-  color: var(--jp-color-text-muted);
-  font-size: var(--jp-text-sm);
-}
-.site-footer__inner { display: flex; justify-content: space-between; gap: var(--jp-space-5); flex-wrap: wrap; }
-.site-footer__social { display: flex; gap: var(--jp-space-4); }
-
-/* --- 4. Page-level content shapes ------------------------------------------------- */
-.site-page-header { margin-block-end: var(--jp-space-7); }
-.site-page-title { margin: 0; }
-
-.site-post-list { display: grid; gap: var(--jp-space-6); }
-.site-post-list__item {
-  padding-block-end: var(--jp-space-6);
-  border-block-end: 1px solid var(--jp-color-border);
-}
-.site-post-list__item:last-child { border-block-end: 0; padding-block-end: 0; }
-.site-post-list__title { font-size: var(--jp-text-xl); margin-block-end: var(--jp-space-2); }
-.site-post-list__title a { color: var(--jp-color-heading); text-decoration: none; }
-.site-post-list__title a:hover { color: var(--jp-color-link); }
-.site-post-excerpt { color: var(--jp-color-text-muted); margin-block-start: var(--jp-space-3); }
-
-.site-post-meta {
-  color: var(--jp-color-text-muted);
-  font-size: var(--jp-text-sm);
-  margin-block-start: var(--jp-space-2);
-}
-/* On the prose measure, and centred the same way, so the title, the meta line and the body
- * all share one left edge. Without this the header sits flush to the 68rem container while
- * .site-prose centres its children at 38rem. */
-.site-post-header {
-  max-width: var(--jp-measure);
-  margin-inline: auto;
-  margin-block-end: var(--jp-space-7);
-}
-.site-post-title { margin: 0; }
-.site-post > .site-prose { margin-block-start: var(--jp-space-6); }
-
-.site-tag-list { display: flex; flex-wrap: wrap; gap: var(--jp-space-2); margin-block-start: var(--jp-space-4); }
-.site-tag {
-  display: inline-block;
-  padding: var(--jp-space-1) var(--jp-space-3);
-  border-radius: var(--jp-radius-pill);
-  background: var(--jp-color-accent-bg);
-  color: var(--jp-color-link);
-  font-size: var(--jp-text-xs);
-  font-weight: var(--jp-weight-medium);
-  text-decoration: none;
-}
-
-.site-author__identity { display: flex; gap: var(--jp-space-5); align-items: center; }
-.site-author__avatar {
-  width: 5rem;
-  height: 5rem;
-  border-radius: var(--jp-radius-pill);
-  object-fit: cover;
-}
-.site-author__role { color: var(--jp-color-text-muted); margin-block-start: var(--jp-space-1); }
-
-.site-error { text-align: center; padding-block: var(--jp-space-9); }
-.site-error p { color: var(--jp-color-text-muted); margin-block-start: var(--jp-space-4); }
-.site-button {
-  display: inline-block;
-  margin-block-start: var(--jp-space-6);
-  background: var(--jp-color-accent);
-  color: var(--jp-color-on-accent);
-  padding: var(--jp-space-3) var(--jp-space-5);
-  border-radius: var(--jp-radius-pill);
-  font-weight: var(--jp-weight-medium);
-  text-decoration: none;
-}
-.site-button:hover { background: var(--jp-color-link-hover); color: var(--jp-color-on-accent); }
 
 /* --- 5. The core block markup contract -------------------------------------------- */
 /* Eight selectors, observed from WordPress core's own save() output and frozen by

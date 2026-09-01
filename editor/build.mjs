@@ -38,6 +38,63 @@ export function browserDefines(env = process.env) {
   );
 }
 
+/**
+ * THE CANVAS STYLESHEET — the design system as one string, for the mu-plugin's section 3.
+ *
+ * Exported for the same reason `browserDefines` is: editor/test/canvas-css.test.mjs asserts
+ * against the exact bytes this build substitutes, rather than against a second copy of the rules
+ * that could quietly drift from it.
+ *
+ * WHICH FILES, AND WHY NOT design/site.css: tokens first (everything below reads its custom
+ * properties), then base.css — reset, element defaults and the eight core wp-block-* selectors —
+ * then the three custom block sheets. site.css is the PAGE: chrome selectors for elements the
+ * canvas does not have, and a `body` that is `min-height: 100vh; display: flex`, a layout assuming
+ * header/main/footer children. base.css and site.css are separate files so that this can be a list
+ * of whole files rather than a rule about which parts of one to send.
+ *
+ * A MISSING FILE FAILS THE BUILD, because the failure it would otherwise cause is a canvas that
+ * looks subtly wrong — one block sheet short — which is not a symptom anyone can read.
+ */
+export const CANVAS_STYLESHEETS = [
+  'tokens.css', 'base.css', 'blocks/hero.css', 'blocks/feature-grid.css', 'blocks/cta.css',
+];
+
+export async function canvasStylesheet() {
+  const designDir = path.join(__dirname, '..', 'design');
+  const parts = await Promise.all(CANVAS_STYLESHEETS.map(async (file) => {
+    const source = await fs.readFile(path.join(designDir, file), 'utf-8');
+    return `/* design/${file} */\n${source}`;
+  }));
+  return parts.join('\n');
+}
+
+/**
+ * Escape for a PHP SINGLE-QUOTED literal, where exactly two characters are special: the backslash
+ * and the apostrophe. Nothing else is — not `$`, not `{`, not a newline — because a single-quoted
+ * string interpolates nothing, which is why it is the target rather than a double-quoted one.
+ *
+ * Backslash first, or the backslashes this adds for apostrophes would themselves be escaped.
+ *
+ * A heredoc was the alternative and is worse: a nowdoc terminator appearing in the CSS would end
+ * the string silently, and CSS is a file other people edit.
+ */
+export function phpSingleQuoted(value) {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+export const CANVAS_CSS_PLACEHOLDER = '__JAMGROUND_CANVAS_CSS__';
+
+/** Substitute the stylesheet into the mu-plugin source, refusing a source with nowhere to put it. */
+export function substituteCanvasCss(muPluginSource, css) {
+  if (!muPluginSource.includes(CANVAS_CSS_PLACEHOLDER)) {
+    throw new Error(
+      `editor/build.mjs: the mu-plugin has no ${CANVAS_CSS_PLACEHOLDER} to substitute the canvas ` +
+      'stylesheet into — section 3 would ship a canvas with no design system and say so at runtime',
+    );
+  }
+  return muPluginSource.replace(CANVAS_CSS_PLACEHOLDER, phpSingleQuoted(css));
+}
+
 async function build() {
   try {
     // Create dist directory if it doesn't exist
@@ -53,6 +110,8 @@ async function build() {
       console.warn('Could not read blueprint.json:', error.message);
     }
 
+    const canvasCss = await canvasStylesheet();
+
     // Read the mu-plugin PHP source to inline it. The blueprint carries no content —
     // the shell writes this file into the WASM filesystem itself, after
     // boot, with mkdir plus writeFile.
@@ -63,6 +122,8 @@ async function build() {
     } catch (error) {
       console.warn('Could not read mu-plugin/jamground.php:', error.message);
     }
+
+    muPluginSource = substituteCanvasCss(muPluginSource, canvasCss);
 
     // THE BLOCK BUNDLE — the second entry point, and the only way the three jamground/* blocks
     // reach the inserter. 03 §Custom-blocks (PoC-7d) settles that PHP registration alone gives a

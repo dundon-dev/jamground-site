@@ -279,6 +279,54 @@ test('mu-plugin: allowlist, supports, block assets, welcome guide, trimmed admin
     assert.equal(heroShape.cta, 0, 'an absent cta must render no <a>');
     assert.equal(heroShape.wrappedInDiv, false, 'useBlockProps must land on the contract\'s own root element');
 
+    // 3b. THE DESIGN SYSTEM REACHED THE BLOCK, which is a different claim from the marker above.
+    // The marker proves section 3's `enqueue_block_assets` half ran; this proves the editor-styles
+    // half arrived and applies to the hero just inserted. Computed values, not the presence of a
+    // <style> tag: a stylesheet that loads and matches nothing looks exactly like one that works.
+    const styled = await cf.locator('section.jp-hero .jp-hero__heading').first().evaluate((h) => {
+      const cs = getComputedStyle(h);
+      const root = getComputedStyle(document.documentElement);
+      return {
+        token: root.getPropertyValue('--jp-color-heading').trim(),
+        fontFamily: cs.fontFamily,
+        // The block sheet's own rule, not an element default — so this distinguishes "tokens.css
+        // and base.css arrived" from "design/blocks/hero.css arrived".
+        fontSize: cs.fontSize,
+        color: cs.color,
+      };
+    });
+    assert.notEqual(styled.token, '', 'design/tokens.css did not reach the canvas — every rule below it reads these custom properties');
+    assert.match(styled.fontFamily, /system-ui|-apple-system|Segoe|sans-serif/i,
+      `the canvas heading should use the site's font stack, got: ${styled.fontFamily}`);
+    assert.notEqual(styled.color, 'rgb(0, 0, 0)',
+      'the heading is still the browser default black, so the design system matched nothing');
+
+    // 3c. AND WP-ADMIN IS UNDAMAGED. The reason section 3 uses two mechanisms rather than one:
+    // `enqueue_block_assets` reaches the admin page as well as the canvas, so the element defaults
+    // — `body { font-family }`, `h1`–`h4`, `p`, `a` — would restyle every screen in wp-admin if
+    // they went that way. They go through `block_editor_settings_all` instead, which WordPress
+    // scopes to the canvas. This is the assertion that would notice if that ever changed: the
+    // previous test could only see the CSS arriving, never what else it landed on.
+    const chrome = await admin.evaluate(() => {
+      const bar = document.querySelector('#wpadminbar');
+      const menu = document.querySelector('#adminmenu');
+      return {
+        barFont: bar && getComputedStyle(bar).fontFamily,
+        barBackground: bar && getComputedStyle(bar).backgroundColor,
+        menuFont: menu && getComputedStyle(menu).fontFamily,
+        bodyFont: getComputedStyle(document.body).fontFamily,
+      };
+    });
+    assert(chrome.barFont, 'the admin bar should be present to compare against');
+    // WordPress's own admin stack, not ours. `--jp-font-sans` resolves to a stack starting with a
+    // system font, so this is asserted on the exact string WordPress sets rather than on a
+    // family name both stacks could share.
+    for (const [where, font] of [['the admin bar', chrome.barFont], ['the admin menu', chrome.menuFont], ["wp-admin's body", chrome.bodyFont]]) {
+      assert.match(font, /Helvetica Neue|sans-serif/i, `${where} should keep WordPress's own type, got: ${font}`);
+      assert.equal(/var\(--jp-/.test(font), false, `${where} is reading a jamground token`);
+    }
+    assert.notEqual(chrome.barBackground, 'rgba(0, 0, 0, 0)', 'the admin bar lost its background');
+
     // 10. The inline-format allowlist. Asserted through the registry rather than by opening
     // the toolbar's "More" menu: the menu's markup is Gutenberg's to change, the registry is
     // the thing the mu-plugin actually acts on, and a toolbar assertion that silently stops
