@@ -62,9 +62,18 @@ custom block live once, in `design/markup/<block>.ts`; the Astro component rende
 description to HTML for the site and the `edit` component renders the same description through
 `createElement` for the canvas, so the two agree by construction rather than by a diff. The
 mu-plugin sends the design system — tokens, element defaults, the core `wp-block-*` selectors and
-the three block sheets — into the canvas as editor styles, which is what makes a block in wp-admin
-carry the site's colours, type and spacing. `design/site.css` is deliberately not sent: it holds
-the page, and the canvas is not one.
+the three block sheets — into the canvas as editor styles. `design/site.css` is deliberately not
+sent: it holds the page, and the canvas is not one.
+
+Sending it is only half of what makes a block in wp-admin carry the site's colours, type and
+spacing, and the sentence above used to stop there while the canvas was rendering in the wrong
+typeface. The canvas is also a WordPress theme's document — the blueprint pins no theme, so it gets
+whatever ships as default — and that theme's `theme.json` becomes a stylesheet the editor injects
+*after* ours. Element selectors on both sides at equal specificity, so every class rule in
+`design/blocks/*.css` won and every element default in `design/base.css` lost. The mu-plugin's
+section 3 therefore also drops the theme's `styles` through `wp_theme_json_data_theme`, keeping its
+`settings` and pointing the canvas's content width at `var(--jp-container)` — the site's own token,
+not a copy of its value.
 
 Two gates hold this in place, and they catch different things. `editor/test/fidelity.test.mjs`
 compares the Astro HTML with the editor's DOM and catches a block that looks wrong in the canvas;

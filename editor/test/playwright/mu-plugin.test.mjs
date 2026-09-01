@@ -283,23 +283,91 @@ test('mu-plugin: allowlist, supports, block assets, welcome guide, trimmed admin
     // The marker proves section 3's `enqueue_block_assets` half ran; this proves the editor-styles
     // half arrived and applies to the hero just inserted. Computed values, not the presence of a
     // <style> tag: a stylesheet that loads and matches nothing looks exactly like one that works.
-    const styled = await cf.locator('section.jp-hero .jp-hero__heading').first().evaluate((h) => {
-      const cs = getComputedStyle(h);
-      const root = getComputedStyle(document.documentElement);
+    // ARRIVING IS NOT WINNING, and this used to assert only arriving. The canvas is a WordPress
+    // theme's document as well as ours: Twenty Twenty-Five's theme.json generates `h1,h2,h3,h4,h5,h6
+    // { font-weight: 400; letter-spacing: -0.1px }` and a `body { font-family: Manrope }`, into a
+    // stylesheet the editor injects AFTER `block_editor_settings_all`'s. Element selectors on both
+    // sides, equal specificity, later wins — so every element default in design/base.css lost while
+    // every class rule in design/blocks/*.css won, and the canvas rendered the right panels in the
+    // wrong typeface. Section 3's `wp_theme_json_data_theme` filter takes the theme's styles out of
+    // the way; this is what says so.
+    //
+    // COMPARED AGAINST THE TOKENS RESOLVED IN THIS DOCUMENT, not against a copy of their values.
+    // The old assertion was `/system-ui|-apple-system|Segoe|sans-serif/i` against the computed
+    // family, and `Manrope, sans-serif` matches it — a generic fallback is in every stack, so the
+    // regex passed on the theme's font for as long as the defect existed. A probe element that
+    // reads `var(--jp-font-sans)` in the same document cannot be satisfied that way, and needs no
+    // updating when a token changes.
+    const styled = await cf.locator('section.jp-hero').first().evaluate((section) => {
+      const h = section.querySelector('.jp-hero__heading');
+      const body = section.querySelector('.jp-hero__body');
+      const hs = getComputedStyle(h);
+      const bs = getComputedStyle(body);
+
+      const probe = document.createElement('div');
+      probe.style.cssText = 'font-family: var(--jp-font-sans); font-weight: var(--jp-weight-bold);'
+        // `--jp-tracking-tight` is in `em`, so it resolves against the element's OWN size, and the
+        // hero heading's size is a clamp() on the viewport — the probe has to be given the size it
+        // is standing in for or the comparison is between two different multiplications.
+        + ` color: var(--jp-color-heading); letter-spacing: var(--jp-tracking-tight);`
+        + ` font-size: ${hs.fontSize}`;
+      document.body.appendChild(probe);
+      const want = getComputedStyle(probe);
+      const wanted = {
+        fontFamily: want.fontFamily, fontWeight: want.fontWeight,
+        color: want.color, letterSpacing: want.letterSpacing,
+      };
+      probe.remove();
       return {
-        token: root.getPropertyValue('--jp-color-heading').trim(),
-        fontFamily: cs.fontFamily,
-        // The block sheet's own rule, not an element default — so this distinguishes "tokens.css
-        // and base.css arrived" from "design/blocks/hero.css arrived".
-        fontSize: cs.fontSize,
-        color: cs.color,
+        token: getComputedStyle(document.documentElement).getPropertyValue('--jp-color-heading').trim(),
+        wanted,
+        heading: { fontFamily: hs.fontFamily, fontWeight: hs.fontWeight, color: hs.color,
+                   letterSpacing: hs.letterSpacing, fontSize: hs.fontSize },
+        // The BODY carries the other half: `p` and `body` are element selectors too, so a heading
+        // that is right does not make a paragraph right.
+        body: { fontFamily: bs.fontFamily, fontWeight: bs.fontWeight },
       };
     });
     assert.notEqual(styled.token, '', 'design/tokens.css did not reach the canvas — every rule below it reads these custom properties');
-    assert.match(styled.fontFamily, /system-ui|-apple-system|Segoe|sans-serif/i,
-      `the canvas heading should use the site's font stack, got: ${styled.fontFamily}`);
-    assert.notEqual(styled.color, 'rgb(0, 0, 0)',
+    // The block sheet's own rule, not an element default — so this distinguishes "tokens.css and
+    // base.css arrived" from "design/blocks/hero.css arrived". A class selector, so it was never
+    // the one at risk; kept because losing it would go unnoticed.
+    assert.notEqual(styled.heading.fontSize, '', 'the hero heading has no font size at all');
+    assert.notEqual(styled.heading.color, 'rgb(0, 0, 0)',
       'the heading is still the browser default black, so the design system matched nothing');
+
+    assert.equal(styled.heading.fontFamily, styled.wanted.fontFamily,
+      `the canvas heading should be set in --jp-font-sans, got: ${styled.heading.fontFamily}`);
+    assert.equal(styled.heading.fontWeight, styled.wanted.fontWeight,
+      `the canvas heading should be --jp-weight-bold, got: ${styled.heading.fontWeight}`);
+    assert.equal(styled.heading.letterSpacing, styled.wanted.letterSpacing,
+      `the canvas heading should carry --jp-tracking-tight, got: ${styled.heading.letterSpacing}`);
+    assert.equal(styled.heading.color, styled.wanted.color,
+      `the canvas heading should be --jp-color-heading, got: ${styled.heading.color}`);
+    assert.equal(styled.body.fontFamily, styled.wanted.fontFamily,
+      `the canvas body copy should be set in --jp-font-sans, got: ${styled.body.fontFamily}`);
+    assert.equal(styled.body.fontWeight, '400',
+      `the canvas body copy should be --jp-weight-normal, got: ${styled.body.fontWeight}`);
+
+    // AND THE CANVAS LAYS OUT TO THE SITE'S OWN WIDTH. Section 3's filter hands WordPress
+    // `var(--jp-container)` for the content size rather than a copy of its value, so the width the
+    // canvas column takes and the width design/blocks/*.css caps each section at are one
+    // declaration. Asserted as two `max-width` resolutions rather than two measured widths, because
+    // a canvas narrower than the container clamps both and makes any width comparison pass.
+    const widths = await cf.locator('body').evaluate((body) => {
+      const measure = (value) => {
+        const probe = document.createElement('div');
+        probe.style.cssText = `max-width: ${value}`;
+        body.appendChild(probe);
+        const resolved = getComputedStyle(probe).maxWidth;
+        probe.remove();
+        return resolved;
+      };
+      return { token: measure('var(--jp-container)'), wp: measure('var(--wp--style--global--content-size)') };
+    });
+    assert.match(widths.token, /^\d+(\.\d+)?px$/, `--jp-container did not resolve in the canvas, got: ${widths.token}`);
+    assert.equal(widths.wp, widths.token,
+      `the canvas content width should BE --jp-container, got: ${widths.wp} against ${widths.token}`);
 
     // 3c. AND WP-ADMIN IS UNDAMAGED. The reason section 3 uses two mechanisms rather than one:
     // `enqueue_block_assets` reaches the admin page as well as the canvas, so the element defaults

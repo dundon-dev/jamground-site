@@ -15,7 +15,9 @@
  *   0. init                        — register the jamground_author post type
  *   1. allowed_block_types_all     — the inserter allowlist, per post type
  *   2. register_block_type_args    — strips supports before registration
- *   3. enqueue_block_assets        — shared block stylesheet
+ *   3. enqueue_block_assets / block_editor_settings_all / wp_theme_json_data_theme
+ *                                 — the design system in the canvas, and the theme's own
+ *                                   styles out of its way
  *   4. admin_init                  — suppress the welcome guide
  *   5. admin_menu                  — remove the menus nothing here can act on
  *   6. admin_bar_menu              — remove the nodes that lead out of the product
@@ -187,6 +189,10 @@ add_filter('register_block_type_args', function ($args) {
 // both renderers emit the same elements and classes; this is what makes one stylesheet reach
 // both, so a block in wp-admin is coloured, set and spaced the way the site will render it.
 //
+// THREE PARTS, and the third is not optional: getting the stylesheet into the canvas is not the
+// same as its rules taking effect there. See `wp_theme_json_data_theme` at the end of this
+// section for what was overriding them and why the answer is subtractive.
+//
 // TWO MECHANISMS, AND THEY ARE NOT INTERCHANGEABLE. The difference is which document each
 // reaches, and getting it wrong restyles wp-admin itself.
 //
@@ -234,6 +240,57 @@ add_filter('block_editor_settings_all', function ($settings) {
 
     $settings['styles'][] = ['css' => $css];
     return $settings;
+});
+
+// ARRIVING IS NOT WINNING, and until this filter existed only the first was true.
+//
+// The canvas is a WordPress THEME'S document as well as ours. The blueprint pins no theme, so it
+// gets whatever WordPress ships as default — Twenty Twenty-Five at wp 7.1 — and that theme's
+// theme.json is compiled into a global-styles stylesheet the editor injects into the canvas
+// iframe AFTER the one `block_editor_settings_all` carries. Both are bare element selectors at
+// equal specificity, so the later one wins, and the split fell exactly along the kind of selector:
+//
+//   design/blocks/*.css   .jp-hero, .jp-cta__link, .jp-feature-grid__item   CLASS   won
+//   design/base.css       body, h1–h4, p, a                                 ELEMENT lost
+//
+// So the canvas drew the right panels, radii, accent and shadows in the WRONG TYPE: Manrope 400 at
+// 21.3px where the site sets its own stack at 700 and 17px, plus a different heading colour and
+// tracking. 62 of the computed properties across the markup contract's twelve elements differed
+// from the built page; with this filter, 2 do, and both are the editor's own gap between two
+// blocks — canvas affordance, not anything a renderer emits. That is not a near miss — `09 §7`
+// excuses the page AROUND a block, and this was inside it, in the one respect the editor's own
+// standing note promises ("their colours, type and spacing are the site's",
+// editor/lib/vocabulary.mjs).
+//
+// THE FIX IS NOT MORE SPECIFICITY. Raising base.css's selectors would win this round and lose the
+// next one to whatever the next default theme declares, and it would make a stylesheet that is
+// shared with the SITE carry weight it only needs in wp-admin. Removing the competing declarations
+// is the same move section 12 makes on patterns and the site editor: close the room, do not argue
+// with it.
+//
+// STYLES GO, SETTINGS STAY, and the asymmetry is load-bearing. `styles` is the half that produces
+// competing CSS. `settings` is the half the editor's own UI reads — the presets, `appearanceTools`,
+// and the layout width that gives the canvas a content column; dropped along with the rest, the
+// post title ends up flush against the frame and every block runs the full width of the pane.
+//
+// THE WIDTH IS THE SITE'S OWN TOKEN, not a copy of its value. `--jp-container` is declared once, in
+// design/tokens.css, which section 3 above sends into this same document — so the width WordPress
+// lays the canvas out to and the width the three block sheets cap themselves at are one
+// declaration rather than two that can drift. WordPress emits it into
+// `--wp--style--global--content-size` verbatim; a `var()` there resolves like any other.
+//
+// `wp_theme_json_data_default` IS DELIBERATELY LEFT ALONE. Core's own theme.json is where the
+// `--wp--preset--*` custom properties the editor UI reads come from, and — measured, not assumed —
+// it contributes no typography that competes with base.css.
+add_filter('wp_theme_json_data_theme', function ($theme_json) {
+    $data = $theme_json->get_data();
+    $settings = $data['settings'] ?? [];
+    $settings['layout'] = ['contentSize' => 'var(--jp-container)', 'wideSize' => 'var(--jp-container)'];
+
+    return new WP_Theme_JSON_Data([
+        'version'  => $data['version'] ?? 3,
+        'settings' => $settings,
+    ], 'theme');
 });
 
 // 4. Suppress the welcome guide. An editor whose familiarity is the product should not
