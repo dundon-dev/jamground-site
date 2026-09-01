@@ -124,6 +124,29 @@ add_filter('allowed_block_types_all', function ($allowed_block_types, $block_edi
 
 // 2. Strip supports the contract cannot express, before registration — so the controls
 // never appear, rather than appearing and being refused at save time.
+//
+// THIS LIST IS THE PHP HALF OF ONE LIST. The other half is `STRIPPED_SUPPORTS` in
+// editor/lib/block-supports.mjs, which applies the same twelve to the HOST PAGE's registry —
+// the one blocks-to-wp.mjs builds the import tree in and export.mjs reads back. This filter
+// cannot reach that registry: `register_block_type_args` fires inside WP_Block_Type_Registry,
+// which exists only in here. editor/test/block-supports.test.mjs reads this array back out of
+// this file and asserts the two agree, because two copies of a list like this is a defect
+// waiting for someone to edit one of them.
+//
+// `className` WAS IN THIS LIST AND HAS BEEN TAKEN OUT. It is not the same thing as
+// `customClassName` and the two are easy to confuse:
+//
+//   className        the block's own generated class — `wp-block-heading`, `wp-block-list`,
+//                    `wp-block-separator`, `wp-block-table`
+//   customClassName  the "Additional CSS class(es)" field in the Advanced panel
+//
+// Only the second is a control that can produce work the contract has no field for. The first
+// is markup the contract FREEZES — `11 §4c` specifies `<hN class="wp-block-heading">`, the Astro
+// components emit it, and test/blocks/core.test.mjs asserts they do. With `className => false`
+// here, this editor re-saved that heading as a bare `<h2>` while the import path had written the
+// class, which is the disagreement `ac0a09f` was treating one symptom of: an untouched heading
+// arrived carrying a whole schema of undefined attributes because its markup no longer matched
+// its own `save()`. Removing it from this list is the cause fixed rather than the symptom.
 add_filter('register_block_type_args', function ($args) {
     $args['supports'] = array_merge($args['supports'] ?? [], [
         'color' => false,
@@ -131,7 +154,6 @@ add_filter('register_block_type_args', function ($args) {
         'spacing' => false,
         'border' => false,
         'shadow' => false,
-        'className' => false,
         'customClassName' => false,
         'anchor' => false,
         'align' => false,

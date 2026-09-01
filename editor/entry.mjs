@@ -2,6 +2,8 @@
 
 import { createBlock, serialize, parse, getBlockType } from '@wordpress/blocks';
 import { registerCoreBlocks } from '@wordpress/block-library';
+import { addFilter } from '@wordpress/hooks';
+import { stripSupports } from './lib/block-supports.mjs';
 import { importPosts } from './lib/import.mjs';
 import { readPosts } from './lib/read-posts.mjs';
 import { writeSiteLinks } from './lib/site-links.mjs';
@@ -49,14 +51,29 @@ function generateBranchName() {
   return `content/change-${suffix}`;
 }
 
-// Expose the blocks API and register core blocks immediately
-// This ensures the API is available for pages that don't boot Playground
-try {
+// The host page's own block registry, set up once at module load so the API is available to
+// pages that never boot Playground.
+//
+// ORDER IS THE WHOLE POINT OF THIS FUNCTION EXISTING. `blocks.registerBlockType` is a
+// registration-time filter: a block already in the registry is not revisited, so layer 1 has to
+// be installed BEFORE registerCoreBlocks() and not merely somewhere above it in the file. It was
+// statement order inside a bare try block, which is a rule nobody can see they are breaking.
+//
+// This registry is the one blocks-to-wp.mjs builds the import tree in and export.mjs reads back,
+// and until now it had no layer 1 at all — so it registered `customClassName` support the editor
+// inside Playground did not, and the two produced different markup for the same block. That is
+// the disagreement `ac0a09f` treated a symptom of.
+function setUpHostRegistry() {
+  stripSupports(addFilter);
   registerCoreBlocks();
+}
+
+try {
+  setUpHostRegistry();
 
   // registerCore wrapper function
   function registerCore(api) {
-    // registerCoreBlocks() has already been called above
+    // setUpHostRegistry() has already run above
     // This function is for compatibility with the contract
   }
 
