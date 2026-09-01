@@ -56,14 +56,25 @@ const unescHtml = (s) =>
 
 /** One level of `core/list` (with `core/list-item` children) back to List/ListL2/ListL3 —
  *  the reverse of `blocks-to-wp.mjs`'s `listToWp`. A nested `core/list` lives as
- *  an innerBlock of its `core/list-item`, the only way Gutenberg represents nesting. */
+ *  an innerBlock of its `core/list-item`, the only way Gutenberg represents nesting.
+ *
+ *  AN UNORDERED LIST OMITS `ordered` RATHER THAN WRITING `false`, which is the same shape the
+ *  `core/quote` arm below already uses for its own optional attribute. `List.ordered` is
+ *  `.optional()` at all three levels and no schema in this contract carries a `.default()`
+ *  (blocks.ts:101-107) — absent means the renderer's default, and `List.astro` renders absent
+ *  and `false` identically (`ordered ? 'ol' : 'ul'`). Writing the key unconditionally
+ *  materialised an absent optional, so a list authored the way the contract says was re-exported
+ *  with `ordered: false`, failed import.mjs's byte comparison, and was held back at boot —
+ *  built fine, uneditable, and silent about why. `false` is also `core/list`'s registered
+ *  default, so this is the write-side of the rule attribute-guard.mjs already applies when
+ *  checking: a value still equal to its registered default is not information. */
 function listWpToContract(block) {
   const items = block.innerBlocks.map((li) => {
     const text = htmlAttrToText(li.attributes.content);
     const nested = (li.innerBlocks ?? []).find((b) => b.name === 'core/list');
     return nested ? { text, list: listWpToContract(nested) } : { text };
   });
-  return { ordered: !!block.attributes.ordered, items };
+  return block.attributes.ordered ? { ordered: true, items } : { items };
 }
 
 /** One `core/table` row (`{ cells: [{ content, tag }] }`) back to the contract's flat array of
